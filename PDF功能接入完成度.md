@@ -18,7 +18,7 @@ L2 生成工具链、Verifier、Session Memory、Milvus/Redis 可选后端、Fas
 | PDF/PPT 页图统一编码 | 已接入接口 | `src/services.py`, `src/retriever.py` | 支持 `RAG_MULTIMODAL_EMBEDDING_API`，可接 ColPali / MiniCPM-V 页图 embedding 服务 |
 | Text query embedding | 已接入 | `src/llm_client.py`, `src/services.py`, `src/retriever.py` | 优先多模态 embedding 服务，其次 OpenAI embedding，最后本地哈希降级 |
 | Milvus 向量库 | 已接入 | `src/infra/vector_store.py`, `src/retriever.py` | 支持 `RAG_VECTOR_BACKEND=milvus`，无 Milvus 环境自动回退内存向量库 |
-| ColPali 本地模型 | 已下载 | `models/colpali-v1.3`, `scripts/download_colpali_model.py` | 本地模型为 `vidore/colpali-v1.3`，已落盘到 `Agent/models/colpali-v1.3` |
+| ColPali 本地模型 | 已下载 | `models/colpali-v1.3`, `scripts/download_colpali_model.py` | 本地模型为 `vidore/colpali-v1.3`，已落盘到 `models/colpali-v1.3` |
 | ColPali late-interaction rerank | 已接入接口 | `src/services.py`, `src/retriever.py` | 支持 `RAG_COLPALI_RERANK_API`，用于 top-k 候选页重排；本地推理服务可基于已下载模型继续封装 |
 | Query rewrite | 已实现 | `src/retriever.py` | 当前包含业务术语替换，可继续扩展 LLM 改写和企业词典 |
 | 文档类型预过滤 | 已实现 | `src/retriever.py` | 支持表单、报表、PPT、手册等类型推断 |
@@ -112,7 +112,7 @@ export COLPALI_MODEL_DIR="models/colpali-v1.3"
 当前阶段采用“文档放本地目录 + 增量建库脚本”的方式，目录建议如下：
 
 ```text
-Agent/
+（仓库根目录）
 ├─ user_docs/                    # 你手工上传/拷贝的原始文档（pdf/xlsx/docx/pptx 等，支持子目录）
 ├─ kb_pages/                     # 建库时渲染出来的页图（按 doc_id_page 命名）
 ├─ data/
@@ -154,7 +154,7 @@ ColPali 在本项目里主要用于“视觉文档检索”和“候选页重排
 本地模型已经下载到：
 
 ```bash
-Agent/models/colpali-v1.3
+models/colpali-v1.3
 ```
 
 如果要在本地直接加载，需要安装 ColPali 推理依赖：

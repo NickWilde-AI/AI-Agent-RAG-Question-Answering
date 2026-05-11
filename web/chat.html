@@ -386,7 +386,7 @@
         <details class="session-drawer" id="sessionDrawer">
           <summary>本地会话与调试（仅存浏览器）</summary>
           <div class="session-inner">
-            <p style="margin:0 0 8px;">服务端运行日志在仓库 <code>Agent/logs/api.log</code>；本面板仅保存你在本页发起的问答 JSON，便于复盘。</p>
+            <p style="margin:0 0 8px;">服务端运行日志在仓库 <code>logs/api.log</code>；本面板仅保存你在本页发起的问答 JSON，便于复盘。</p>
             <div class="session-actions">
               <button type="button" class="btn-ghost" id="exportSession">导出 JSON</button>
               <button type="button" class="btn-ghost" id="clearSession">清空记录</button>
@@ -667,7 +667,7 @@
     renderSessionDump();
     refreshCaps();
 
-    appendBotBundle("你好，我是企业智能问答助手。回答正文在上；分支、命中页、耗时等折叠在「检索与运行详情」里。底部可导出本会话 JSON，服务端日志在 Agent/logs/api.log。", {
+    appendBotBundle("你好，我是企业智能问答助手。回答正文在上；分支、命中页、耗时等折叠在「检索与运行详情」里。底部可导出本会话 JSON，服务端日志在 logs/api.log。", {
       branch: "—",
       verified: true,
       cost_ms: 0,

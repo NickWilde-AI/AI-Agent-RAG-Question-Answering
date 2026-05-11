@@ -2,7 +2,7 @@
 """
 对本地 /ask 做多类型冒烟请求（需已启动 FastAPI，默认 http://127.0.0.1:8000）。
 
-用法（在 Agent 目录下）:
+用法（在仓库根目录下）:
   python scripts/smoke_test_qa.py
   python scripts/smoke_test_qa.py --base http://127.0.0.1:8000
 """

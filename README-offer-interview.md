@@ -103,7 +103,7 @@ flowchart TD
 ## 快速开始
 
 ```bash
-cd Agent
+# 在仓库根目录执行
 ./run_offer.sh
 ```
 
@@ -112,7 +112,7 @@ cd Agent
 ## 启动 API（面试演示推荐）
 
 ```bash
-cd Agent
+# 在仓库根目录执行
 source .venv/bin/activate
 set -a
 source .env
