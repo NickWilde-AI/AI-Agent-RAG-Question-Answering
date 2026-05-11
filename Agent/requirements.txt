@@ -1,0 +1,10 @@
+numpy
+openai
+fastapi
+uvicorn
+prometheus-client
+huggingface-hub
+tqdm
+openpyxl
+python-docx
+python-pptx

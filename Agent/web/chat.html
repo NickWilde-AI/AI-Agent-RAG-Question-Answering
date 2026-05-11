@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>企业智能问答台</title>
+  <style>
+    :root {
+      --page-bg: #f2f4f8;
+      --card-bg: #ffffff;
+      --panel-bg: #f8faff;
+      --text: #1f2329;
+      --muted: #647086;
+      --primary: #3370ff;
+      --primary-2: #5b8bff;
+      --border: #dce1ea;
+      --ok: #00b578;
+      --err: #f04438;
+      --bot-bg: #f5f8ff;
+      --user-bg: #e8f1ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--page-bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 18px;
+    }
+    .app {
+      width: min(1120px, 100%);
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 8px 28px rgba(15, 35, 95, 0.08);
+    }
+    .header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: linear-gradient(180deg, #ffffff, #f9fbff);
+    }
+    .brand {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #09c688, var(--ok));
+      box-shadow: 0 0 0 5px rgba(0,181,120,0.15);
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .sub {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .badge-row {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      border: 1px solid var(--border);
+      color: #4b5b78;
+      background: #f4f7ff;
+      font-size: 12px;
+      border-radius: 999px;
+      padding: 5px 10px;
+    }
+    .api-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .api-row input {
+      width: 300px;
+      max-width: 70vw;
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    .api-row input:focus,
+    .toolbar input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(51,112,255,0.16);
+    }
+    .btn {
+      background: linear-gradient(180deg, var(--primary-2), var(--primary));
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: .2px;
+    }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .content {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 64vh;
+    }
+    .side {
+      border-right: 1px solid var(--border);
+      padding: 14px 12px;
+      background: var(--panel-bg);
+    }
+    .side h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: #2d3955;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      color: #45536f;
+      background: #fff;
+      font-size: 12px;
+      border-radius: 10px;
+      padding: 7px 10px;
+      cursor: pointer;
+      transition: all .12s ease-in;
+    }
+    .chip:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: #f3f7ff;
+    }
+    .chat {
+      flex: 1;
+      min-height: 44vh;
+      overflow: auto;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: #fff;
+    }
+    .msg {
+      max-width: 86%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid transparent;
+    }
+    .msg.user {
+      margin-left: auto;
+      background: var(--user-bg);
+      border-color: #c8dafe;
+      color: #1c305f;
+    }
+    .msg.bot {
+      background: var(--bot-bg);
+      border-color: var(--border);
+    }
+    .meta {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .main-col {
+      display: flex;
+      flex-direction: column;
+      min-height: 64vh;
+    }
+    .msg.bundle.bot {
+      max-width: 92%;
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+    .answer-text {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: var(--bot-bg);
+      border: 1px solid var(--border);
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .run-detail {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fafcff;
+      padding: 0 10px 8px;
+      font-size: 12px;
+      color: #3a4a63;
+    }
+    .run-detail > summary {
+      cursor: pointer;
+      padding: 8px 0;
+      font-weight: 600;
+      color: #2d3955;
+      list-style: none;
+    }
+    .run-detail > summary::-webkit-details-marker { display: none; }
+    .run-detail > summary::before {
+      content: "▸ ";
+      color: var(--primary);
+    }
+    .run-detail[open] > summary::before { content: "▾ "; }
+    .run-dl {
+      margin: 0;
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 4px 10px;
+    }
+    .run-dl dt {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .run-dl dd {
+      margin: 0;
+      word-break: break-word;
+    }
+    .hits-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .hits-table th, .hits-table td {
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+      text-align: left;
+    }
+    .hits-table th { background: #eef3ff; color: #2d3955; }
+    .bubble-badges {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .session-drawer {
+      border-top: 1px solid var(--border);
+      background: #f9fbff;
+      max-height: 220px;
+      overflow: auto;
+      font-size: 12px;
+    }
+    .session-drawer > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-weight: 600;
+      color: #2d3955;
+      list-style: none;
+    }
+    .session-drawer > summary::-webkit-details-marker { display: none; }
+    .session-inner {
+      padding: 0 14px 12px;
+      color: var(--muted);
+    }
+    .session-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .btn-ghost {
+      background: #fff;
+      color: var(--primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .session-pre {
+      margin: 0;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-height: 120px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .caps-line {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .toolbar {
+      border-top: 1px solid var(--border);
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      background: #fbfcff;
+    }
+    .toolbar input {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    .status {
+      padding: 8px 14px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    @media (max-width: 980px) {
+      .content {
+        grid-template-columns: 1fr;
+      }
+      .side {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div>
+        <div class="brand">
+          <span class="dot"></span>
+          <h1 class="title">企业智能问答台</h1>
+        </div>
+        <p class="sub">日间模式 · Frontend 仅调用 FastAPI，发布由平台侧负责</p>
+        <p id="capsLine" class="caps-line"></p>
+        <div class="badge-row">
+          <span class="badge">Agent Workflow</span>
+          <span class="badge">RAG + Router + Verifier</span>
+          <span class="badge">可追溯回答</span>
+        </div>
+      </div>
+      <div class="api-row">
+        <input id="apiBase" placeholder="FastAPI 地址，如 http://10.10.1.12:8000" />
+        <button id="pingBtn" class="btn">连通性检查</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <aside class="side">
+        <h3>快速提问示例</h3>
+        <div class="chip-list" id="quickList">
+          <button class="chip" data-q="采购申请单的采购单号是多少？">采购单号</button>
+          <button class="chip" data-q="2024Q3 经营分析里哪个产品线销售额最高？">经营分析</button>
+          <button class="chip" data-q="谁负责介绍了实验/试点安排？">跨页人物</button>
+          <button class="chip" data-q="故障代码 E-203 的中文含义是什么？">跨语种翻译</button>
+          <button class="chip" data-q="系统支持哪些接口？">系统能力</button>
+        </div>
+      </aside>
+      <div class="main-col">
+        <div id="chat" class="chat"></div>
+        <details class="session-drawer" id="sessionDrawer">
+          <summary>本地会话与调试（仅存浏览器）</summary>
+          <div class="session-inner">
+            <p style="margin:0 0 8px;">服务端运行日志在仓库 <code>Agent/logs/api.log</code>；本面板仅保存你在本页发起的问答 JSON，便于复盘。</p>
+            <div class="session-actions">
+              <button type="button" class="btn-ghost" id="exportSession">导出 JSON</button>
+              <button type="button" class="btn-ghost" id="clearSession">清空记录</button>
+            </div>
+            <pre id="sessionDump" class="session-pre">[]</pre>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input id="question" placeholder="请输入你的问题，例如：采购申请单的采购单号是多少？" />
+      <input id="topk" type="number" min="1" max="20" value="3" style="width:90px" />
+      <button id="sendBtn" class="btn">发送</button>
+    </div>
+    <div id="status" class="status">就绪</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const chatEl = $("chat");
+    const statusEl = $("status");
+    const apiBaseEl = $("apiBase");
+    const qEl = $("question");
+    const topkEl = $("topk");
+    const sendBtn = $("sendBtn");
+    const pingBtn = $("pingBtn");
+    const quickList = $("quickList");
+    const capsLine = $("capsLine");
+    const sessionDump = $("sessionDump");
+    const exportSessionBtn = $("exportSession");
+    const clearSessionBtn = $("clearSession");
+
+    const SESSION_KEY = "rag_chat_session_v1";
+
+    const urlBaseFromQuery = new URLSearchParams(location.search).get("api");
+    const defaultBase = location.protocol === "file:" ? "http://127.0.0.1:8000" : location.origin;
+    apiBaseEl.value = urlBaseFromQuery || localStorage.getItem("chat_api_base") || defaultBase;
+
+    function setStatus(text, level = "") {
+      statusEl.className = "status " + level;
+      statusEl.textContent = text;
+    }
+
+    function getBase() {
+      const base = apiBaseEl.value.trim().replace(/\/$/, "");
+      localStorage.setItem("chat_api_base", base);
+      return base;
+    }
+
+    function loadSession() {
+      try {
+        return JSON.parse(localStorage.getItem(SESSION_KEY) || "[]");
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveSessionEntry(entry) {
+      const arr = loadSession();
+      arr.push(entry);
+      while (arr.length > 40) arr.shift();
+      localStorage.setItem(SESSION_KEY, JSON.stringify(arr, null, 0));
+      sessionDump.textContent = JSON.stringify(arr, null, 2);
+    }
+
+    function renderSessionDump() {
+      sessionDump.textContent = JSON.stringify(loadSession(), null, 2);
+    }
+
+    function appendUserMessage(query, topk) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg user";
+      const t = document.createElement("div");
+      t.textContent = query;
+      const b = document.createElement("div");
+      b.className = "bubble-badges";
+      b.textContent = "检索深度 top-k = " + topk;
+      wrap.appendChild(t);
+      wrap.appendChild(b);
+      chatEl.appendChild(wrap);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function appendBotBundle(answer, detail) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg bot bundle";
+
+      const main = document.createElement("div");
+      main.className = "answer-text";
+      main.textContent = answer || "(空响应)";
+
+      const det = document.createElement("details");
+      det.className = "run-detail";
+      const sum = document.createElement("summary");
+      sum.textContent = "检索与运行详情";
+      const body = document.createElement("div");
+
+      const dl = document.createElement("dl");
+      dl.className = "run-dl";
+
+      function addRow(label, value) {
+        const dt = document.createElement("dt");
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.textContent = value == null ? "" : String(value);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      addRow("分支", detail.branch);
+      addRow("证据校验", detail.verified ? "通过" : "未通过");
+      addRow("耗时", (detail.cost_ms != null ? detail.cost_ms + " ms" : ""));
+      addRow("改写 query", detail.rewritten_query || "");
+      if (detail.source_files && detail.source_files.length) {
+        addRow("依据文档（完整文件名）", detail.source_files.join("、"));
+      }
+
+      if (detail.hits && detail.hits.length) {
+        const dt = document.createElement("dt");
+        dt.textContent = "命中页";
+        const dd = document.createElement("dd");
+        const tbl = document.createElement("table");
+        tbl.className = "hits-table";
+        const trh = document.createElement("tr");
+        ["page_id", "score"].forEach((h) => {
+          const th = document.createElement("th");
+          th.textContent = h;
+          trh.appendChild(th);
+        });
+        tbl.appendChild(trh);
+        detail.hits.forEach((h) => {
+          const tr = document.createElement("tr");
+          ["page_id", "score"].forEach((k) => {
+            const td = document.createElement("td");
+            td.textContent = h[k] != null ? String(h[k]) : "";
+            tr.appendChild(td);
+          });
+          tbl.appendChild(tr);
+        });
+        dd.appendChild(tbl);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      if (detail.retry_hits && detail.retry_hits.length) {
+        const dt = document.createElement("dt");
+        dt.textContent = "扩召回";
+        const dd = document.createElement("dd");
+        dd.textContent = JSON.stringify(detail.retry_hits);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      if (detail.loop_steps && detail.loop_steps.length) {
+        const dt = document.createElement("dt");
+        dt.textContent = "Agent Loop";
+        const dd = document.createElement("dd");
+        dd.textContent = JSON.stringify(detail.loop_steps, null, 2);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      body.appendChild(dl);
+      det.appendChild(sum);
+      det.appendChild(body);
+      wrap.appendChild(main);
+      wrap.appendChild(det);
+      chatEl.appendChild(wrap);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function refreshCaps() {
+      const base = getBase();
+      capsLine.textContent = "";
+      try {
+        const r = await fetch(base + "/capabilities", { method: "GET" });
+        if (!r.ok) return;
+        const c = await r.json();
+        const parts = [];
+        parts.push(c.colpali_rerank ? "ColPali rerank 已启用" : "ColPali rerank 未启用");
+        parts.push(c.multimodal_embedding ? "多模态 embedding 已配置" : "多模态 embedding 未配置（启动脚本为秒开关闭了远程 embedding）");
+        capsLine.textContent = parts.join(" · ");
+      } catch (e) {
+        capsLine.textContent = "";
+      }
+    }
+
+    async function ping() {
+      const base = getBase();
+      setStatus("检查中...");
+      try {
+        const r = await fetch(base + "/health", { method: "GET" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        setStatus("连通成功: " + JSON.stringify(data), "ok");
+        await refreshCaps();
+      } catch (e) {
+        setStatus("连通失败: " + e.message + "（若跨域，请让后端放通 CORS）", "err");
+      }
+    }
+
+    async function ask() {
+      const query = qEl.value.trim();
+      if (!query) return;
+
+      const topk = Math.max(1, Math.min(20, Number(topkEl.value || 3)));
+      const base = getBase();
+      sendBtn.disabled = true;
+      appendUserMessage(query, topk);
+      setStatus("正在请求 /ask ...");
+
+      const t0 = Date.now();
+      try {
+        const r = await fetch(base + "/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, topk })
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          throw new Error("HTTP " + r.status + " " + t);
+        }
+        const data = await r.json();
+        appendBotBundle(data.answer, data);
+        const entry = {
+          ts: new Date().toISOString(),
+          query,
+          topk,
+          client_latency_ms: Date.now() - t0,
+          response: data,
+        };
+        saveSessionEntry(entry);
+        setStatus("请求成功", "ok");
+      } catch (e) {
+        const errText = "请求失败: " + e.message;
+        const wrap = document.createElement("div");
+        wrap.className = "msg bot";
+        wrap.textContent = errText;
+        chatEl.appendChild(wrap);
+        chatEl.scrollTop = chatEl.scrollHeight;
+        saveSessionEntry({ ts: new Date().toISOString(), query, topk, error: errText });
+        setStatus(errText, "err");
+      } finally {
+        sendBtn.disabled = false;
+        qEl.focus();
+      }
+    }
+
+    sendBtn.addEventListener("click", ask);
+    pingBtn.addEventListener("click", ping);
+    exportSessionBtn.addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(loadSession(), null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "rag_chat_session.json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    clearSessionBtn.addEventListener("click", () => {
+      localStorage.removeItem(SESSION_KEY);
+      renderSessionDump();
+    });
+    quickList.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target && target.dataset && target.dataset.q) {
+        qEl.value = target.dataset.q;
+        qEl.focus();
+      }
+    });
+    qEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") ask();
+    });
+    apiBaseEl.addEventListener("change", () => {
+      refreshCaps();
+    });
+
+    renderSessionDump();
+    refreshCaps();
+
+    appendBotBundle("你好，我是企业智能问答助手。回答正文在上；分支、命中页、耗时等折叠在「检索与运行详情」里。底部可导出本会话 JSON，服务端日志在 Agent/logs/api.log。", {
+      branch: "—",
+      verified: true,
+      cost_ms: 0,
+      rewritten_query: "—",
+      hits: [],
+      retry_hits: null,
+      loop_steps: null,
+    });
+  </script>
+</body>
+</html>

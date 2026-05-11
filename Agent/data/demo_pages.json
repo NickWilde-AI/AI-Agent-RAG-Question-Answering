@@ -1,0 +1,68 @@
+[
+  {
+    "page_id": "report_p1",
+    "doc_id": "report_2024q3",
+    "doc_type": "report",
+    "language": "zh",
+    "content": "2024Q3 经营分析，华东区负责人为李雷。产品线A销售额120，产品线B销售额180，产品线C销售额95。",
+    "chart_data": {
+      "产品线A": 120,
+      "产品线B": 180,
+      "产品线C": 95
+    },
+    "fields": {
+      "负责人": "李雷"
+    },
+    "people": [
+      "李雷"
+    ]
+  },
+  {
+    "page_id": "form_p3",
+    "doc_id": "procurement_form",
+    "doc_type": "form",
+    "language": "zh",
+    "content": "采购申请单。采购单号 PO-78421，发票日期 2024-09-03，申请部门供应链中心。",
+    "chart_data": {},
+    "fields": {
+      "采购单号": "PO-78421",
+      "发票日期": "2024-09-03"
+    },
+    "people": [
+      "王敏"
+    ]
+  },
+  {
+    "page_id": "ppt_p2",
+    "doc_id": "quarter_review_ppt",
+    "doc_type": "ppt",
+    "language": "zh",
+    "content": "季度复盘PPT：实验与试点安排由张三负责介绍，风险项由赵六补充。",
+    "chart_data": {},
+    "fields": {},
+    "people": [
+      "张三",
+      "赵六"
+    ]
+  },
+  {
+    "page_id": "manual_en_p8",
+    "doc_id": "device_manual_en",
+    "doc_type": "manual",
+    "language": "en",
+    "content": "Fault code E-203: Spindle temperature too high, please stop the machine.",
+    "chart_data": {},
+    "fields": {},
+    "people": []
+  },
+  {
+    "page_id": "infographic_p5",
+    "doc_id": "campaign_infographic",
+    "doc_type": "infographic",
+    "language": "zh",
+    "content": "一图读懂活动规则，核心信息包括时间窗口、参与门槛和奖励发放节奏。",
+    "chart_data": {},
+    "fields": {},
+    "people": []
+  }
+]

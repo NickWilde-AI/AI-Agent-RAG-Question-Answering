@@ -1,0 +1,44 @@
+# 密钥与本地环境（绝不提交）
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# 本地文档资料与建库产物（用户知识库、页图、索引）
+Agent/user_docs/
+Agent/kb_pages/
+Agent/data/user_pages.json
+Agent/data/index_manifest.json
+Agent/logs/
+*.log
+
+# 大模型权重与缓存
+Agent/models/
+**/.cache/
+
+# 个人笔记与二进制资料（简历/宣讲 PDF 等勿入库）
+面试.md
+*.pdf
+Agent/Untitled
+
+# 面试/个人整理类 Markdown（可按需删行改为提交）
+Agent/面试文档总入口.md
+Agent/安卓开发者友好版-项目理解.md
+RAG 项目总结.md
