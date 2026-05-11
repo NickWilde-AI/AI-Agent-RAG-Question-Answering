@@ -1,0 +1,26 @@
+# 轻量 API：把本机 .env 挂进容器即可（勿把 .env 提交到 Git）。
+#
+# 使用：
+#   cp .env.example .env   # 填好 Key
+#   docker compose up --build
+#
+# 浏览器：http://<服务器IP>:8000/chat
+#
+# 若已有本机构建的 data/user_pages.json，可取消下行注释并挂载：
+#   volumes:
+#     - ./data/user_pages.json:/app/data/user_pages.json:ro
+
+services:
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      RAG_ENABLE_REAL_EMBEDDING: "false"
+      RAG_ENABLE_MULTIMODAL_EMBEDDING: "false"
+      RAG_ENABLE_COLPALI_RERANK: "false"
+      RAG_COLPALI_RERANK_API: ""
+      RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+    restart: unless-stopped

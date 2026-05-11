@@ -96,6 +96,17 @@ bash scripts/one_click_demo.sh
 
 服务日志（一键脚本）：`logs/api.log`。
 
+### 5. Docker / 云主机（本机跑不动时推荐）
+
+仓库已提供 **`Dockerfile`** 与 **`docker-compose.yml`**：只打包 **轻量 API**（内置 `data/demo_pages.json`，**不含** ColPali / GPU；镜像内默认关闭远程 embedding 与 Plan Loop，与云上小机器更匹配）。
+
+```bash
+cp .env.example .env   # 填好 OPENAI_* 等
+docker compose up --build
+```
+
+云服务器上安装 Docker 后，把代码或镜像同步上去，同样执行 `docker compose up -d` 即可；安全组放行 **8000**。需要自带大索引时，可把 `data/user_pages.json` 挂成数据卷（进阶，见 `docker-compose` 注释扩展）。
+
 ---
 
 ## 配置说明

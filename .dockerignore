@@ -1,0 +1,23 @@
+.git
+.github
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.env
+.env.*
+!.env.example
+.idea
+.vscode
+*.log
+logs
+user_docs
+kb_pages
+data/user_pages.json
+data/index_manifest.json
+models
+**/.cache
+*.pdf
+.DS_Store
+面试.md
+RAG 项目总结.md
