@@ -1,0 +1,51 @@
+# 云端「主 API + ColPali rerank」一键编排（需带 NVIDIA GPU 的机器 + nvidia-container-toolkit）。
+#
+# 准备：
+#   1. 宿主机存在 ./models/colpali-v1.3（可用 scripts/download_colpali_model.py 下载到该路径）
+#   2. 若使用自建索引：./data/user_pages.json 与 ./kb_pages/ 与索引里 image_path 一致（建议相对路径 kb_pages/...）
+#   3. cp .env.example .env 并填 OPENAI_*
+#
+# 启动：
+#   docker compose -f docker-compose.cloud-gpu.yml up --build -d
+#
+# 仅 CPU 云机不要用这个文件（ColPali 推理会非常慢或 OOM）。
+
+services:
+  colpali:
+    build:
+      context: .
+      dockerfile: Dockerfile.colpali
+    ports:
+      - "9001:9001"
+    environment:
+      COLPALI_MODEL_DIR: /models/colpali-v1.3
+    volumes:
+      - ./models/colpali-v1.3:/models/colpali-v1.3:ro
+      - ./kb_pages:/app/kb_pages:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      RAG_ENABLE_REAL_EMBEDDING: "false"
+      RAG_ENABLE_MULTIMODAL_EMBEDDING: "false"
+      RAG_ENABLE_COLPALI_RERANK: "true"
+      RAG_COLPALI_RERANK_API: http://colpali:9001/rerank
+      RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+    volumes:
+      - ./kb_pages:/app/kb_pages:ro
+      # 若存在自建索引，取消下一行注释（且保证 JSON 内 image_path 在容器内指向 /app/kb_pages/... 等可读路径）
+      # - ./data/user_pages.json:/app/data/user_pages.json:ro
+    depends_on:
+      - colpali
+    restart: unless-stopped

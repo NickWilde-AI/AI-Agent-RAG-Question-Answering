@@ -36,6 +36,17 @@ class RerankResponse(BaseModel):
 app = FastAPI(title="Local ColPali Rerank Service", version="0.1.0")
 
 
+def _default_torch_device() -> str:
+    """未设置 COLPALI_DEVICE 时：云端 GPU 用 cuda，本机 Mac 用 mps，否则 cpu。"""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def model_status() -> Tuple[str, str, str]:
     """检查本地 ColPali 权重是否完整，避免首次请求时长时间阻塞后才失败。"""
     model_dir = Path(os.getenv("COLPALI_MODEL_DIR", "models/colpali-v1.3"))
@@ -61,7 +72,7 @@ def load_colpali() -> tuple[object, object, object]:
     status, _, detail = model_status()
     if status != "ready":
         raise RuntimeError(f"ColPali local model is {status}: {detail}")
-    device = os.getenv("COLPALI_DEVICE", "mps")
+    device = os.getenv("COLPALI_DEVICE") or _default_torch_device()
     dtype_name = os.getenv("COLPALI_DTYPE", "bfloat16")
     torch_dtype = torch.bfloat16 if dtype_name == "bfloat16" else torch.float16
 

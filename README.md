@@ -96,16 +96,34 @@ bash scripts/one_click_demo.sh
 
 服务日志（一键脚本）：`logs/api.log`。
 
-### 5. Docker / 云主机（本机跑不动时推荐）
+### 5. Docker / 云主机
 
-仓库已提供 **`Dockerfile`** 与 **`docker-compose.yml`**：只打包 **轻量 API**（内置 `data/demo_pages.json`，**不含** ColPali / GPU；镜像内默认关闭远程 embedding 与 Plan Loop，与云上小机器更匹配）。
+#### 5.1 仅 API（本机或低配云机，**不含 ColPali**）
+
+`Dockerfile` + `docker-compose.yml`：内置 `data/demo_pages.json`，镜像内关闭远程 embedding / ColPali / Plan Loop。
 
 ```bash
 cp .env.example .env   # 填好 OPENAI_* 等
 docker compose up --build
 ```
 
-云服务器上安装 Docker 后，把代码或镜像同步上去，同样执行 `docker compose up -d` 即可；安全组放行 **8000**。需要自带大索引时，可把 `data/user_pages.json` 挂成数据卷（进阶，见 `docker-compose` 注释扩展）。
+安全组放行 **8000**。
+
+#### 5.2 云端 GPU 跑 ColPali + API（本机跑不动 ColPali 时用）
+
+思路：**ColPali 单独一个容器吃 GPU**，主 API 另一个容器，通过 `http://colpali:9001/rerank` 调用 —— 与你在本机起 `9001` + `8000` 一样，只是换成云上两台「逻辑服务」、一键编排。
+
+```bash
+# 1) 在服务器上准备权重目录（可用 scripts/download_colpali_model.py 下载到 models/colpali-v1.3）
+# 2) 若有自建索引：准备 kb_pages/ 与 data/user_pages.json（索引里 image_path 建议为 kb_pages/...，两容器均挂载到 /app/kb_pages）
+# 3) 云主机需：NVIDIA 驱动 + nvidia-container-toolkit，Docker 支持 GPU
+cp .env.example .env
+
+docker compose -f docker-compose.cloud-gpu.yml up --build -d
+```
+
+- 详见仓库根目录 **`docker-compose.cloud-gpu.yml`** 内注释（含 `user_pages.json` 可选挂载）。  
+- **无 GPU 的 CPU 云机不要强上 ColPali**，推理极慢且易 OOM；此时用 **5.1** 即可。
 
 ---
 
