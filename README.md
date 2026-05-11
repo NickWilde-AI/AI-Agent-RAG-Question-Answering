@@ -4,13 +4,11 @@
 
 **企业级视觉 RAG 与 Agent 编排演示 — 可观测、可开关、可增量建库**
 
-*Visual RAG Q&A stack with FastAPI: retrieval → routing → multi-tool QA → verification → optional agent loop.*
+*Visual RAG Q&A with FastAPI: retrieval → routing → multi-tool QA → verification → optional agent loop.*
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![OpenAI-compatible](https://img.shields.io/badge/LLM-OpenAI--compatible-412991)](https://platform.openai.com/docs/api-reference)
-
-[功能特性](#-功能特性) · [架构](#-架构一览) · [快速开始](#-快速开始) · [配置说明](#-配置说明) · [自建索引](#-自建知识库索引) · [开发与接口](#-开发与-http-接口)
 
 </div>
 
@@ -21,6 +19,8 @@
 本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（事实问答、跨页归纳、图表读数、翻译等），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**、**Prometheus 指标** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
 
 默认偏向 **轻量可跑**：避免大库启动时逐页远程 embedding 与本地 ColPali 占用过高资源；可按环境变量逐步打开企业级能力。
+
+**应用入口**：`uvicorn offer_agent.api:app` — `offer_agent/api.py` 装载 `src.interfaces.api:app`。
 
 ---
 
@@ -35,40 +35,6 @@
 | **编排** | 可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
 | **服务化** | FastAPI：`/ask`、`/health`、`/metrics`；静态托管 `web/chat.html` |
 | **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
-
----
-
-## 架构一览
-
-```mermaid
-flowchart LR
-  subgraph Client["客户端"]
-    UI[Web / Chat]
-  end
-  subgraph API["FastAPI"]
-    Ask["/ask"]
-  end
-  subgraph Core["核心管线"]
-    R[Retriever]
-    RT[Router]
-    T[Tools]
-    V[Verifier]
-    Loop[Agent Loop]
-  end
-  subgraph Data["数据"]
-    D1[(user_pages / demo_pages)]
-  end
-  UI --> Ask
-  Ask --> R
-  R --> RT
-  RT --> T
-  T --> V
-  V --> Loop
-  R --> D1
-  T --> D1
-```
-
-**入口应用**：`uvicorn offer_agent.api:app` → `offer_agent/api.py` 装载 `src.interfaces.api:app`。
 
 ---
 
@@ -136,7 +102,7 @@ bash scripts/one_click_demo.sh
 
 - **数据加载逻辑**：若存在 `data/user_pages.json` 则优先加载，否则回退到随仓库提供的 `data/demo_pages.json`（见 `src/api.py`）。
 - **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验/翻译、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度。
-- **详细清单**：多格式建库与 ColPali 接入状态见根目录 **`PDF功能接入完成度.md`**；面试向技术映射与叙事见 **`README-offer-interview.md`**。
+- **详细清单**：多格式建库与 ColPali 接入状态见 **`PDF功能接入完成度.md`**；面试向技术映射与叙事见 **`README-offer-interview.md`**。
 
 ---
 
@@ -195,11 +161,11 @@ Issue 与 Pull Request 均欢迎。提交前请确认：
 
 ---
 
-## 相关链接
+## 相关文档
 
 | 文档 | 内容 |
 |------|------|
-| [README-offer-interview.md](./README-offer-interview.md) | 面试向：架构叙事、技术点与代码映射 |
+| [README-offer-interview.md](./README-offer-interview.md) | 面试向：技术叙事、技术点与代码映射 |
 | [PDF功能接入完成度.md](./PDF功能接入完成度.md) | 能力矩阵与建库 / ColPali 落地说明 |
 
 ---
@@ -207,4 +173,3 @@ Issue 与 Pull Request 均欢迎。提交前请确认：
 ## 维护说明
 
 以演示与可扩展实现为主，持续迭代。缺陷与需求请通过 **GitHub Issues** 跟踪；合并请求请尽量附带复现步骤或接口行为说明。
-
