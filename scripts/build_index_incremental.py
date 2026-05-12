@@ -161,6 +161,12 @@ def main() -> None:
     old_pages_data = read_json(output_pages, [])
     old_manifest = read_json(manifest_path, {})
 
+    print(
+        f"[增量建库] 已载入现有索引 {len(old_pages_data)} 条页面记录；"
+        "进度条按「文件」计数，单个大 PDF 解析完才会从 0% 走到下一格，并非死机。",
+        flush=True,
+    )
+
     old_pages: List[Page] = [Page(**item) for item in old_pages_data]
     doc_to_pages: Dict[str, List[Page]] = {}
     for page in old_pages:
@@ -207,6 +213,7 @@ def main() -> None:
             continue
 
         doc_type = infer_doc_type(document)
+        print(f"[增量建库] 正在解析: {display_path(document, Path.cwd())}  （大 PDF 可能需数分钟）", flush=True)
         try:
             pages = ingest_document(
                 file_path=str(document),
