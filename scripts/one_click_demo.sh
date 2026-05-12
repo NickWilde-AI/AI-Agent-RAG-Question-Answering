@@ -57,12 +57,15 @@ fi
 echo "== 载入环境变量 =="
 set -a
 # shellcheck disable=SC1091
+set +u
 source .env
+set -u
 set +a
+# 可选变量：.env 未声明时给默认值，避免 set -u 与后续命令报错
+RAG_BUILD_DPI="${RAG_BUILD_DPI:-144}"
+RAG_SKIP_INDEX_BUILD="${RAG_SKIP_INDEX_BUILD:-0}"
 
 mkdir -p user_docs kb_pages data
-
-: "${RAG_SKIP_INDEX_BUILD:=0}"
 
 echo "== 增量建库（递归处理 PDF / XLSX / DOCX / PPT）=="
 doc_count="$(python - <<'PY'
@@ -142,29 +145,28 @@ if ! curl -sS --max-time 5 "http://127.0.0.1:8000/health" >/dev/null; then
   exit 1
 fi
 
+CF_PUBLIC_URL=""
+
 echo ""
 echo "✅ 本地服务已启动（RAG_LITE_MODE=${RAG_LITE_MODE}）"
-echo " - Chat 页面: http://127.0.0.1:8000/chat"
-echo " - API 文档 : http://127.0.0.1:8000/docs"
-echo " - Health   : http://127.0.0.1:8000/health"
 if [ "${RAG_LITE_MODE}" != "0" ]; then
-  echo " - 模式说明: 轻量/普通模式（哈希检索 + 规则路由，无 ColPali 进程）"
+  echo " - 模式: 轻量（哈希检索 + 规则路由，无 ColPali）"
 else
   colpali_status="$(curl -sS --max-time 2 http://127.0.0.1:9001/health 2>/dev/null || true)"
   if echo "$colpali_status" | grep -q '"model_status":"ready"'; then
-    echo " - ColPali : ready"
+    echo " - ColPali: ready"
   else
-    echo " - ColPali : 已启动但本地权重不完整时会自动降级（详见 logs/colpali.log）"
+    echo " - ColPali: 已启动（权重不全时会降级，见 logs/colpali.log）"
   fi
 fi
 
 if command -v cloudflared >/dev/null 2>&1; then
   echo ""
-  echo "检测到 cloudflared，正在创建公网测试地址..."
+  echo "== 公网临时隧道（cloudflared）=="
   pkill -f "cloudflared tunnel --url http://127.0.0.1:8000" >/dev/null 2>&1 || true
   nohup cloudflared tunnel --url http://127.0.0.1:8000 > logs/cloudflared.log 2>&1 &
-  for _ in $(seq 1 20); do
-    url="$(python - <<'PY'
+  for _ in $(seq 1 35); do
+    CF_PUBLIC_URL="$(python - <<'PY'
 from pathlib import Path
 import re
 p = Path("logs/cloudflared.log")
@@ -175,17 +177,31 @@ else:
     print(m[-1] if m else "")
 PY
 )"
-    if [ -n "$url" ]; then
-      echo "🌍 公网测试地址: $url/chat"
-      echo "（任何人打开该链接即可访问聊天页面）"
-      exit 0
+    if [ -n "$CF_PUBLIC_URL" ]; then
+      break
     fi
     sleep 1
   done
-  echo "cloudflared 已启动，但暂未抓到公网 URL，请查看 logs/cloudflared.log"
+  if [ -z "$CF_PUBLIC_URL" ]; then
+    echo "隧道已后台启动，若下面未显示公网地址，请稍后执行: grep trycloudflare logs/cloudflared.log"
+  fi
 else
   echo ""
-  echo "未安装 cloudflared。若要一键公网分享，请先安装："
-  echo "  brew install cloudflared"
-  echo "安装后重跑本脚本即可自动生成 trycloudflare 链接。"
+  echo "（未安装 cloudflared，仅本地访问。公网分享请: brew install cloudflared 后重跑本脚本）"
 fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  在浏览器打开（聊天页）："
+echo ""
+echo "    http://127.0.0.1:8000/chat"
+if [ -n "$CF_PUBLIC_URL" ]; then
+  echo ""
+  echo "  公网临时地址（trycloudflare，过期需重跑脚本）："
+  echo ""
+  echo "    ${CF_PUBLIC_URL}/chat"
+fi
+echo ""
+echo "  API 文档: http://127.0.0.1:8000/docs   日志: logs/api.log"
+echo "════════════════════════════════════════════════════════════"
+echo ""
