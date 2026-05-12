@@ -76,15 +76,14 @@ if [ "${RAG_SKIP_INDEX_BUILD}" = "1" ]; then
   echo "已跳过（RAG_SKIP_INDEX_BUILD=1），使用已有 data/user_pages.json 或 demo_pages.json"
 elif [ "$doc_count" -gt 0 ]; then
   echo "发现可建库文档 $doc_count 个，开始增量处理…（大 PDF 多时可能需数分钟）"
-  # 页图 DPI：默认略降以加快建库；高质量：RAG_BUILD_DPI=200 bash scripts/one_click_demo.sh
-  : "${RAG_BUILD_DPI:=144}"
+  # 页图 DPI：默认 144；高质量：RAG_BUILD_DPI=200 …（:- 避免 set -u 下 .env 未声明时报错）
   python scripts/build_index_incremental.py \
     --input-dir user_docs \
     --output-pages data/user_pages.json \
     --manifest data/index_manifest.json \
     --image-dir kb_pages \
     --lang zh \
-    --dpi "${RAG_BUILD_DPI}"
+    --dpi "${RAG_BUILD_DPI:-144}"
 else
   echo "未发现可建库文档，跳过增量建库，默认使用 data/demo_pages.json"
 fi
