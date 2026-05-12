@@ -9,6 +9,15 @@ cd "$(dirname "$0")/.."
 # 需要 ColPali + Redis 全量链路时：RAG_LITE_MODE=0 bash scripts/one_click_demo.sh
 : "${RAG_LITE_MODE:=1}"
 
+# pip：访问 pypi.org 若出现 SSLEOFError / 超时，默认走清华镜像；强制官方源：RAG_USE_PYPI_MIRROR=0
+: "${RAG_USE_PYPI_MIRROR:=1}"
+PIP_INDEX_ARGS=()
+if [ "${RAG_USE_PYPI_MIRROR}" = "1" ]; then
+  : "${RAG_PIP_MIRROR:=https://pypi.tuna.tsinghua.edu.cn/simple}"
+  PIP_INDEX_ARGS=(-i "${RAG_PIP_MIRROR}" --trusted-host pypi.tuna.tsinghua.edu.cn)
+  echo "== pip 使用镜像: ${RAG_PIP_MIRROR}（官方源请设 RAG_USE_PYPI_MIRROR=0）=="
+fi
+
 mkdir -p logs
 
 free_port() {
@@ -27,11 +36,11 @@ if [ ! -d ".venv" ]; then
   python3 -m venv .venv
 fi
 source .venv/bin/activate
-python -m pip install -U pip >/dev/null
-python -m pip install -r requirements.txt >/dev/null
-python -m pip install socksio >/dev/null
+python -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
+python -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+python -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
 if [ "${RAG_LITE_MODE}" = "0" ]; then
-  python -m pip install -r requirements-colpali.txt >/dev/null
+  python -m pip install -r requirements-colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
 fi
 
 if [ "${RAG_LITE_MODE}" != "0" ]; then
@@ -53,6 +62,8 @@ set +a
 
 mkdir -p user_docs kb_pages data
 
+: "${RAG_SKIP_INDEX_BUILD:=0}"
+
 echo "== 增量建库（递归处理 PDF / XLSX / DOCX / PPT）=="
 doc_count="$(python - <<'PY'
 from pathlib import Path
@@ -61,8 +72,10 @@ root = Path("user_docs")
 print(sum(1 for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts))
 PY
 )"
-if [ "$doc_count" -gt 0 ]; then
-  echo "发现可建库文档 $doc_count 个，开始增量处理..."
+if [ "${RAG_SKIP_INDEX_BUILD}" = "1" ]; then
+  echo "已跳过（RAG_SKIP_INDEX_BUILD=1），使用已有 data/user_pages.json 或 demo_pages.json"
+elif [ "$doc_count" -gt 0 ]; then
+  echo "发现可建库文档 $doc_count 个，开始增量处理…（大 PDF 多时可能需数分钟，进度条在动即未卡死）"
   python scripts/build_index_incremental.py \
     --input-dir user_docs \
     --output-pages data/user_pages.json \
