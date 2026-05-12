@@ -80,7 +80,7 @@ else
   echo "== 启动 ColPali rerank 服务 =="
   pkill -f "uvicorn scripts.colpali_rerank_service:app" >/dev/null 2>&1 || true
   free_port 9001
-  nohup .venv/bin/uvicorn scripts.colpali_rerank_service:app --host 127.0.0.1 --port 9001 > logs/colpali.log 2>&1 &
+  nohup .venv/bin/python -m uvicorn scripts.colpali_rerank_service:app --host 127.0.0.1 --port 9001 > logs/colpali.log 2>&1 &
 fi
 
 echo "== 启动 FastAPI 主服务 =="
@@ -94,12 +94,12 @@ if [ "${RAG_LITE_MODE}" != "0" ]; then
     RAG_ENABLE_COLPALI_RERANK=false \
     RAG_COLPALI_RERANK_API= \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
-    .venv/bin/uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
+    .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 else
   nohup env RAG_ENABLE_REAL_EMBEDDING=false RAG_ENABLE_MULTIMODAL_EMBEDDING=false \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
     RAG_ENABLE_COLPALI_RERANK=true RAG_COLPALI_RERANK_API=http://127.0.0.1:9001/rerank \
-    .venv/bin/uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
+    .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 fi
 
 echo "等待服务启动..."
