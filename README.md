@@ -22,11 +22,29 @@
 
 **应用入口**：`uvicorn offer_agent.api:app` — `offer_agent/api.py` 装载 `src.interfaces.api:app`。
 
-**文档约定**：对外说明以 **本 README** 为准；环境变量与开关见 **`.env.example`**；各模块设计说明见 **`src/`** 内源码注释（如 `pipeline.py`、`retriever.py`）。本地面试笔记与能力矩阵表不纳入版本库。
+**文档约定**：对外说明以 **本 README** 为准；环境变量与开关见 **`.env.example`**；各模块设计说明见 **`src/`** 内源码注释（如 `pipeline.py`、`retriever.py`）。**个人简历、面试笔记、宣讲 PDF 等请放在 `private/` 目录**（该目录默认不入库，说明见 `private/README.md`）。
 
 ---
 
-## 功能特性
+## 仓库目录结构
+
+```text
+.
+├── README.md                 # 对外说明（主文档）
+├── .env.example              # 环境变量与 RAG_* 开关说明
+├── main.py                   # 离线演示与评测入口
+├── offer_agent/              # Uvicorn 包入口（api:app）
+├── src/                      # 核心业务：config、retriever、router、tools、pipeline、api、infra…
+├── scripts/                  # one_click_demo、建库、ColPali 服务、冒烟测试等
+├── web/                      # 聊天前端 chat.html
+├── data/                     # demo_pages.json（随仓库）；user_pages.json 等由建库生成（见 .gitignore）
+├── private/                  # 本地隐私区：简历 / 面试 / PDF（仅 private/README.md 可纳入版本库）
+├── docker-compose*.yml       # 本地或 GPU 云编排
+├── Dockerfile*               # 镜像构建
+└── requirements*.txt       # Python 依赖
+```
+
+---
 
 | 模块 | 能力说明 |
 |------|----------|
@@ -173,7 +191,7 @@ bash scripts/reset_kb_local.sh
 | `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy 评测 |
 | `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | 对 `/ask` 做冒烟请求（需服务已启动） |
 
-**核心目录**
+**核心目录**（与上文「仓库目录结构」一致；此处为开发最常改路径）
 
 ```text
 .
@@ -182,7 +200,8 @@ bash scripts/reset_kb_local.sh
 ├── scripts/              # 一键脚本、建库、ColPali 服务、冒烟测试
 ├── web/chat.html         # 聊天前端
 ├── data/demo_pages.json  # 演示用页面索引（随仓库）
-└── main.py               # 命令行演示与评测入口
+├── private/              # 本地隐私资料（不入库，见 private/README.md）
+└── main.py                 # 命令行演示与评测入口
 ```
 
 ---

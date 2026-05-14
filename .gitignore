@@ -36,23 +36,22 @@ logs/
 models/
 **/.cache/
 
-# ---------- 简历 / 个人隐私 / 宣讲 PDF（仅本地，勿提交）----------
+# ---------- 本地隐私目录（简历 / 面试 / 宣讲 PDF 等，勿提交）----------
+# 除 private/README.md 外，private 下一层及子目录全部忽略（简历、面试、PDF 等）
+private/*
+!private/README.md
+
+# 误放在仓库根目录的隐私文件（兜底）
 *.pdf
 Untitled
 面试.md
 面试文档总入口.md
 安卓开发者友好版-项目理解.md
-
-# 姓名、简历、包装类 Markdown
 陈鹏*.md
 *简历*.md
 简历*.md
 简历技术点*.md
-
-# 本地复习/叙事笔记（公网以 README 为准，不入库）
 RAG 项目总结.md
 RAG 项目完整介绍*.md
-
-# 面试/简历向补充文档（仅本地，不入库）
 PDF功能接入完成度.md
 README-offer-interview.md

@@ -19,5 +19,6 @@ models
 **/.cache
 *.pdf
 .DS_Store
+private
 面试.md
 RAG 项目总结.md
