@@ -21,6 +21,9 @@ build/
 .vscode/
 .DS_Store
 
+# Cursor 本地规则与 PDF 抽取（常含简历/个人文本，不入库）
+.cursor/
+
 # 本地文档资料与建库产物（用户知识库、页图、索引）
 user_docs/
 kb_pages/
@@ -33,15 +36,18 @@ logs/
 models/
 **/.cache/
 
-# 个人笔记与二进制资料（简历/宣讲 PDF 等勿入库）
-面试.md
+# ---------- 简历 / 个人隐私 / 宣讲 PDF（仅本地，勿提交）----------
 *.pdf
 Untitled
-
-# 简历全文 Markdown（由 PDF 抽取生成，勿提交）
-陈鹏_AI Agent_华北理工_5年.md
-
-# 面试/个人整理类 Markdown（可按需删行改为提交）
+面试.md
 面试文档总入口.md
 安卓开发者友好版-项目理解.md
-RAG 项目总结.md
+
+# 姓名、简历、包装类 Markdown
+陈鹏*.md
+*简历*.md
+简历*.md
+简历技术点*.md
+
+# 个人笔记（若需入库可从本段删除对应行）
+RAG 项目完整介绍*.md
