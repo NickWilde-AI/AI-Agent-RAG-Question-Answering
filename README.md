@@ -22,6 +22,8 @@
 
 **应用入口**：`uvicorn offer_agent.api:app` — `offer_agent/api.py` 装载 `src.interfaces.api:app`。
 
+**文档约定**：对外说明以 **本 README** 与 **`PDF功能接入完成度.md`** 为准；本地扩展笔记（如 `RAG 项目总结.md`）不纳入版本库。
+
 ---
 
 ## 功能特性
