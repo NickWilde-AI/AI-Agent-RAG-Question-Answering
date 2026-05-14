@@ -22,7 +22,7 @@
 
 **应用入口**：`uvicorn offer_agent.api:app` — `offer_agent/api.py` 装载 `src.interfaces.api:app`。
 
-**文档约定**：对外说明以 **本 README** 与 **`PDF功能接入完成度.md`** 为准；本地扩展笔记（如 `RAG 项目总结.md`）不纳入版本库。
+**文档约定**：对外说明以 **本 README** 为准；环境变量与开关见 **`.env.example`**；各模块设计说明见 **`src/`** 内源码注释（如 `pipeline.py`、`retriever.py`）。本地面试笔记与能力矩阵表不纳入版本库。
 
 ---
 
@@ -132,8 +132,7 @@ docker compose -f docker-compose.cloud-gpu.yml up --build -d
 ## 配置说明
 
 - **数据加载逻辑**：若存在 `data/user_pages.json` 则优先加载，否则回退到随仓库提供的 `data/demo_pages.json`（见 `src/api.py`）。
-- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验/翻译、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度。
-- **详细清单**：多格式建库与 ColPali 接入状态见 **`PDF功能接入完成度.md`**；面试向技术映射与叙事见 **`README-offer-interview.md`**。
+- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验/翻译、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度；详见 **`.env.example`** 与各 `src/*.py` 模块头注释。
 
 ---
 
@@ -206,10 +205,8 @@ Issue 与 Pull Request 均欢迎。提交前请确认：
 
 ## 相关文档
 
-| 文档 | 内容 |
-|------|------|
-| [README-offer-interview.md](./README-offer-interview.md) | 面试向：技术叙事、技术点与代码映射 |
-| [PDF功能接入完成度.md](./PDF功能接入完成度.md) | 能力矩阵与建库 / ColPali 落地说明 |
+- **`.env.example`**：全部 `RAG_*` 与外部服务 URL 说明。  
+- **`src/pipeline.py`、`src/retriever.py`、`src/api.py`**：主链路、检索与 HTTP 入口（文件头含架构说明）。
 
 ---
 
