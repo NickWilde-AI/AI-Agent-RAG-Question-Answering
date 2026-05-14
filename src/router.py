@@ -1,8 +1,31 @@
 """
-Router Agent（规则版）。
+router.py — L1 路由：把自然语言问题分到四条工具分支
 
-真实项目中可以替换为 LLM function calling。
-这里用规则来保证“离线可运行且稳定可复现”。
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- 在 `pipeline.QAEngine.ask` 里 **检索之后、调用 tools 之前** 调用 `route(query)`。
+- 输出 `branch`：`fact_qa` / `multi_page_qa` / `chart_qa` / `translate_qa`，与简历「四分支工具编排」一致。
+- 优先级：若配置允许且 LLM 可用 → `_route_with_llm`（含 OpenAI **function calling** 选工具名）；否则走**关键词规则**兜底，保证离线可复现。
+
+================================================================================
+【类比 Android】
+================================================================================
+- 像 `Intent` 解析：`ACTION_VIEW` vs `ACTION_SEND` 决定走哪个 Activity；这里是字符串分支名决定走哪条工具链。
+- `ROUTER_TOOLS` JSON schema ≈ 给 LLM 看的「manifest 里声明的 exported service 列表」，模型只能回调其中一个。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `if llm_branch:`：Python 对 `None`、空串走 false；Kotlin 里注意不要用 `if (x)` 对可空 String 混用 trim 习惯。
+- `{self.BRANCH_FACT, ...}`：字面量 **set**，`in` 成员测试 O(1) 均摊，类似 `EnumSet` / `HashSet.contains`。
+- `any(x in q for x in [...])`：`any` + 生成器表达式，短路求值；有一个 True 即 True。
+- `except Exception: return None`：吞掉 LLM 异常后回退规则路由；线上通常会打日志。
+
+Router Agent（规则版 + 可选 LLM）。
+
+真实项目中可以替换为纯 LLM function calling。
+这里用规则来保证「离线可运行且稳定可复现」。
 """
 
 from __future__ import annotations

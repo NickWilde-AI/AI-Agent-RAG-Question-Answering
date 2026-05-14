@@ -1,4 +1,31 @@
-"""轻量 API 服务入口（面试够用版）。"""
+"""
+api.py — HTTP 入口（FastAPI）：把浏览器 / curl 请求转给编排引擎
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- 模块加载时 `build_engine` / `build_agent_loop`：准备好「一辆车」（引擎 + 可选外层 loop）。
+- `POST /ask`：一次用户提问的**边界**；内部要么 `agent_loop.run`（多轮扩 top-k），要么 `engine.ask`（单轮）。
+- 返回 `AskResponse`：把 `branch`、`verified`、`hits`、`loop_steps` 暴露给前端，对应简历里的「可解释 Agent」。
+
+================================================================================
+【类比 Android】
+================================================================================
+- `FastAPI()` ≈ 定义一套 **Retrofit + 内嵌小型 WebServer**（实际是 ASGI）：`@app.get` / `@app.post` 像接口声明。
+- `AskRequest` / `AskResponse`（Pydantic）≈ **Gson/Moshi data class** 或 Kotlin `@Serializable`：自动校验 JSON 字段类型与范围。
+- 模块级 `engine = build_engine(...)`：类似 `Application.onCreate` 里初始化全局单例 Repository（注意：改 data_path 需重启进程才重新 build）。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `@app.post("/ask", response_model=AskResponse)`：装饰器 = 给函数「注册路由 + 响应模型」；`response_model` 控制序列化形状。
+- `List[Dict[str, Any]]`：`typing` 泛型；`Any` 像「未擦除的 Object」，JSON 里嵌套结构常用。
+- `if req.topk else engine.ask(req.query)`：Python 里 `0` 也会走 falsy 分支；这里 topk 为正整数时语义正常。
+- 列表推导 `[{...} for s in loop_run.steps]`：类似 `loopRun.getSteps().stream().map(...).toList()`。
+- `time.perf_counter()`：单调时钟测耗时，比 `System.nanoTime` 心智负担低，适合做 `cost_ms`。
+
+轻量 API 服务入口（面试够用版）。
+"""
 
 from __future__ import annotations
 

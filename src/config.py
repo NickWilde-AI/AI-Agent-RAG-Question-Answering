@@ -1,7 +1,44 @@
-"""生产风格配置模块（支持环境变量）。"""
+"""
+config.py — 全局配置（环境变量 → 一个只读 Settings 对象）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+这里是「开关面板」：决定 top-k、是否走 LLM Router/Verifier、向量后端 Milvus 还是内存、
+是否开启外层 Plan-Execute Loop 等。不直接参与业务编排，但影响 pipeline/agent_loop 行为。
+
+================================================================================
+【类比 Android / Java 后端】
+================================================================================
+- 像 `BuildConfig` + `gradle.properties` + 远程配置的合体：集中读环境，避免魔法数散落在 Activity。
+- `SETTINGS = Settings()` 单例：类似 Kotlin `object AppConfig` 或 Java `public static final` 配置 holder。
+- `frozen=True` 的 dataclass：像「不可变配置 DTO」，构造后字段不应被改，减少并发/误改隐患。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `@dataclass(frozen=True)`：为类生成 `__init__`、`__repr__` 等；`frozen=True` 等价于字段只读（赋值会抛错）。
+- `os.getenv("KEY", "default")`：类似 `System.getenv()`，第二个参数是默认值字符串。
+- `bool: _get_bool(...)`：把字符串 `"1" / true / yes / on"` 解析成布尔，等价于手写 `Boolean.parseBoolean` 的宽松版。
+- `Path(__file__).resolve().parent.parent`：`__file__` 是当前源文件路径；`.parent` 上一级目录；用来定位仓库根下的 `.env`。
+- `try/except ImportError`：可选依赖 `python-dotenv` 没装时跳过，不阻塞启动（类似 Gradle optional module）。
+- 文件末尾 `SETTINGS = Settings()`：模块 import 时执行一次，全局单例（注意：单测里若要换配置需 mock 或 reload）。
+
+生产风格配置模块（支持环境变量）。
+"""
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
+
+# 从仓库根目录 .env 注入环境变量（无需依赖 shell 里先 source .env）
+try:
+    from dotenv import load_dotenv
+
+    _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(_ENV_FILE)
+except ImportError:
+    pass
 
 
 def _get_bool(name: str, default: bool) -> bool:

@@ -1,4 +1,6 @@
-"""Tools 模块映射（兼容入口）。"""
+"""
+engine/tools.py — 薄转发：真源 `src/tools.py`
+"""
 
 from ..tools import *  # noqa: F401,F403
 

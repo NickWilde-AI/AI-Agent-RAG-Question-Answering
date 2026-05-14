@@ -151,6 +151,18 @@ python scripts/build_index_incremental.py \
 
 重启 API 后即可检索新索引。`user_docs/`、`kb_pages/`、`data/user_pages.json` 等默认由 **`.gitignore`** 排除，请勿将敏感资料提交至远程仓库。
 
+**文档清单（按类型分列文件名）**：扫描目录并写入文本文件，便于核对入库资料：
+
+```bash
+python scripts/list_user_docs_catalog.py --input-dir user_docs --output data/user_docs_catalog.txt
+```
+
+**清空旧索引并重建**：本地检索依赖 `data/user_pages.json`、`data/index_manifest.json` 与 `kb_pages/` 下的页面截图；删除这些后再跑上面的增量建库命令即可「换血」（原始文档仍在 `user_docs/`）：
+
+```bash
+bash scripts/reset_kb_local.sh
+```
+
 ---
 
 ## 开发与 HTTP 接口

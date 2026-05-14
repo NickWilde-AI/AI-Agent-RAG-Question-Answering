@@ -1,4 +1,26 @@
 """
+tools.py — L2 生成：四条分支工具（fact / multi_page / chart / translate）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- 仅被 `pipeline.QAEngine._run_branch` 调用；输入已是「检索后的 Page 列表」。
+- 每条工具内部再调 `services` 里的 HTTP Client（VLM / Chart / Translation）或 `LLMClient`；失败则 `_fact_fallback_formatted` 等规则兜底（你导出 JSON 里看到的「简要结论」模板）。
+
+================================================================================
+【类比 Android】
+================================================================================
+- 像 **UseCase 包**：`FactQaUseCase`、`TranslateQaUseCase` 各自封装下游 RPC；`ThreadPoolExecutor` 类似 `ExecutorService` 并行翻译引擎。
+- `_doc_full_name`：从 `Page` 取展示文件名，类似从 `MediaItem` 取 `displayName`。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `dict.fromkeys(iterable)`：有序去重（Py3.7+ dict 保序），比手写 `LinkedHashSet` 模式短。
+- `Optional[LLMClient] = None`：默认不注入 LLM；Kotlin 默认参数 `llm: LLMClient? = null`。
+- `with ThreadPoolExecutor(...) as pool:`：上下文管理器，`with` 结束时自动 `shutdown`；类似 `use` / try-with-resources 模式封装线程池。
+- `lines: List[str] = []` 后 `lines.append`：可变列表累加字符串块，最后 `"\n".join(lines)`。
+
 四条分支工具实现（简化版）。
 
 设计目标：
@@ -52,6 +74,40 @@ def _doc_full_name(page: Page) -> str:
     return page.doc_id
 
 
+def _fact_fallback_formatted(query: str, pages: List[Page]) -> str:
+    """
+    LLM / VLM 不可用时的兜底：固定分段排版，避免把 raw chunk 糊成一整坨。
+    """
+    doc_names = list(dict.fromkeys(_doc_full_name(p) for p in pages))
+    lines: List[str] = []
+    qshort = (query or "").strip()
+    if len(qshort) > 240:
+        qshort = qshort[:240] + "…"
+    lines.append("【简要结论】")
+    lines.append(f"问题：{qshort or '（空）'}")
+    lines.append("以下为检索命中的材料节选（按文档拆分）。完整语义归纳依赖大模型 API；若本节过长，可降低 top-k。")
+    lines.append("")
+    lines.append("【依据文档】")
+    for n in doc_names:
+        lines.append(f"- {n}")
+    lines.append("")
+    lines.append("【材料摘录】")
+    for i, p in enumerate(pages[:8], 1):
+        fname = _doc_full_name(p)
+        meta_title = (p.metadata or {}).get("title") or ""
+        label = meta_title.strip() or p.page_id
+        raw = (p.content or "").strip()
+        excerpt = " ".join(raw.split())[:320]
+        if len(raw) > 320:
+            excerpt += "…"
+        lines.append(f"{i}. 《{fname}》｜{label}")
+        lines.append(f"   {excerpt}")
+        lines.append("")
+    lines.append("【说明】")
+    lines.append("当前为规则兜底展示。若希望自动归纳成流畅段落，请配置可用的 OPENAI_API_KEY / OPENAI_BASE_URL。")
+    return "\n".join(lines).strip()
+
+
 def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> str:
     """
     事实问答：可合并多页（同一 Excel 多 sheet、或 top-k 多段材料）。
@@ -97,9 +153,9 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
             if ctx:
                 synthesized = llm.chat_text(
                     "你是企业知识库问答助手。只能依据「材料」段落作答，不要使用外部常识臆测。"
-                    "第一段必须以「依据文档：」开头，列出所有引用到的完整文件名（含扩展名），多个用顿号「、」分隔。"
-                    "后续分段作答，条理清晰，尽量多写；若某条信息来自特定 sheet/页，可在句末用小括号标注 page_id 或标题。"
-                    "若材料仍不足，请明确写「材料中未找到足够依据」并说明缺什么。"
+                    "输出必须使用清晰层级：先写「依据文档：」列出完整文件名（含扩展名）；再写「结论」用 2～5 条要点回答用户问题；"
+                    "需要时可写「摘录」短引用。不要使用一整段无标题的长代码块堆砌。"
+                    "若材料不足，写「材料中未找到足够依据」并说明缺口。"
                     "回答正文不少于 120 字为宜（除非材料本身极短）。",
                     f"用户问题：{query}\n\n材料：\n{ctx}",
                 )
@@ -116,15 +172,7 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
         first_key = next(iter(page.fields))
         return f"依据文档：{_doc_full_name(page)}\n{page.fields[first_key]}"
 
-    lines: List[str] = []
-    lines.append("依据文档：" + "、".join(dict.fromkeys(_doc_full_name(p) for p in pages)))
-    for p in pages[:5]:
-        snippet = (p.content or "").strip().replace("\n", " ")[:200]
-        if snippet:
-            lines.append(f"- {_doc_full_name(p)}：{snippet}")
-    if len(lines) == 1:
-        return lines[0] + "\n（材料中可抽取的连续文本较少，建议提高 top-k 或换更接近材料用词的问题。）"
-    return "\n".join(lines)
+    return _fact_fallback_formatted(query, pages)
 
 
 def multi_page_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> str:

@@ -1,4 +1,31 @@
-"""真实 LLM/Embedding 客户端，统一封装 OpenAI 调用。"""
+"""
+llm_client.py — 大模型与 Embedding 的**统一网关**（OpenAI 兼容 SDK）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- **Router**：`choose_tool` → function calling 选分支名。
+- **Verifier / tools**：`chat_text` 做短文本判别或归纳（无 key 时上层不调用或抛错被捕获）。
+- **Retriever**：`embed` 做文本向量（`enable_real_embedding` 时），否则检索侧用哈希 mock。
+- `client is None`：表示未配置 API Key，全仓库走「规则 / 哈希」降级路径。
+
+================================================================================
+【类比 Android】
+================================================================================
+- 像一个 **Retrofit ApiService + OkHttpClient** 单例：统一 baseUrl、apiKey、超时与重试策略（此处重试在调用方）。
+- `@classmethod def from_settings(cls) -> "LLMClient"`：类似 **静态工厂** `LLMClient.from(context)`，用全局配置构造实例。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `@classmethod`：第一个参数约定名 `cls`，指类本身；用于替代重载构造器的工厂方法。
+- `-> "LLMClient"`：返回类型**字符串**形式 + `from __future__ import annotations`，避免类自引用时前向解析问题。
+- `Optional[OpenAI]`：`OpenAI | None` 的同义；Kotlin `OpenAI?`。
+- `resp.choices[0].message.content or ""`：`or` 对 `None`、空串提供默认值，类似 `?: ""`。
+- `@property def enabled`：只读计算属性，用法 `if client.enabled`，类似 Kotlin `val enabled get()`。
+
+真实 LLM/Embedding 客户端，统一封装 OpenAI 调用。
+"""
 
 from __future__ import annotations
 

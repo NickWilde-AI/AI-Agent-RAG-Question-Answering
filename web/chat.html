@@ -182,6 +182,26 @@
       background: var(--bot-bg);
       border-color: var(--border);
     }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .thinking-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      border-color: var(--border);
+    }
+    .spinner {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
     .meta {
       margin-top: 6px;
       color: var(--muted);
@@ -471,6 +491,26 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
+    function appendThinkingPlaceholder() {
+      removeThinkingPlaceholder();
+      const wrap = document.createElement("div");
+      wrap.className = "msg bot thinking-row";
+      wrap.id = "thinking-placeholder";
+      const sp = document.createElement("div");
+      sp.className = "spinner";
+      const tx = document.createElement("span");
+      tx.textContent = "正在检索并生成回答…";
+      wrap.appendChild(sp);
+      wrap.appendChild(tx);
+      chatEl.appendChild(wrap);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function removeThinkingPlaceholder() {
+      const el = document.getElementById("thinking-placeholder");
+      if (el) el.remove();
+    }
+
     function appendBotBundle(answer, detail) {
       const wrap = document.createElement("div");
       wrap.className = "msg bot bundle";
@@ -597,6 +637,7 @@
       const base = getBase();
       sendBtn.disabled = true;
       appendUserMessage(query, topk);
+      appendThinkingPlaceholder();
       setStatus("正在请求 /ask ...");
 
       const t0 = Date.now();
@@ -611,6 +652,7 @@
           throw new Error("HTTP " + r.status + " " + t);
         }
         const data = await r.json();
+        removeThinkingPlaceholder();
         appendBotBundle(data.answer, data);
         const entry = {
           ts: new Date().toISOString(),
@@ -622,6 +664,7 @@
         saveSessionEntry(entry);
         setStatus("请求成功", "ok");
       } catch (e) {
+        removeThinkingPlaceholder();
         const errText = "请求失败: " + e.message;
         const wrap = document.createElement("div");
         wrap.className = "msg bot";
@@ -631,6 +674,7 @@
         saveSessionEntry({ ts: new Date().toISOString(), query, topk, error: errText });
         setStatus(errText, "err");
       } finally {
+        removeThinkingPlaceholder();
         sendBtn.disabled = false;
         qEl.focus();
       }

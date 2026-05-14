@@ -1,4 +1,28 @@
-"""企业级外部能力适配层。
+"""
+services.py — 外部能力适配层（HTTP JSON）：多模态 embedding / rerank / VLM / 图表 / 翻译
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- **检索侧**：`MultimodalEmbeddingClient`、`ColPaliRerankClient` 被 `retriever` 使用。
+- **生成侧**：`VLMClient`、`ChartParsingClient`、`TranslationEngineClient` 被 `tools` / `verifier` 使用。
+- 未配置 URL 或开关关闭时：各 client 的 `enabled` 为 False，上层静默走本地逻辑。
+
+================================================================================
+【类比 Android】
+================================================================================
+- 每个 `@dataclass` Client ≈ **Retrofit Service 接口 + 一个极简 RemoteDataSource 实现**；`post_json` 是用标准库手搓 POST（减少依赖）。
+- `urllib.request`：类似 `HttpURLConnection`，demo 够用；生产常换 `OkHttp` 级特性（连接池、拦截器）。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `@dataclass` 在只有字段的类上：自动生成 `__init__`，字段默认值直接写在类体（类似 Kotlin `data class` 主构造器默认值）。
+- `payload: Dict[str, Any]`：`Any` ≈ JSON 动态结构在类型上的「顶」。
+- `json.dumps(..., ensure_ascii=False).encode("utf-8")`：网络字节必须 UTF-8；`ensure_ascii=False` 保留中文可读。
+- `with request.urlopen(...) as resp:`：`urlopen` 返回 context manager，读完自动关流。
+
+企业级外部能力适配层。
 
 这里统一封装多模态 embedding、VLM、图表解析和翻译服务。没有配置外部服务时，
 上层会自动走本地规则路径，保证工程仍可运行。

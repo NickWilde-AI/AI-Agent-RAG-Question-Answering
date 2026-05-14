@@ -13,67 +13,67 @@ L2 生成工具链、Verifier、Session Memory、Milvus/Redis 可选后端、Fas
 
 ## PDF 功能对齐表
 
-| PDF 功能 | 当前接入状态 | 工程模块 | 说明 |
-| --- | --- | --- | --- |
-| PDF/PPT 页图统一编码 | 已接入接口 | `src/services.py`, `src/retriever.py` | 支持 `RAG_MULTIMODAL_EMBEDDING_API`，可接 ColPali / MiniCPM-V 页图 embedding 服务 |
-| Text query embedding | 已接入 | `src/llm_client.py`, `src/services.py`, `src/retriever.py` | 优先多模态 embedding 服务，其次 OpenAI embedding，最后本地哈希降级 |
-| Milvus 向量库 | 已接入 | `src/infra/vector_store.py`, `src/retriever.py` | 支持 `RAG_VECTOR_BACKEND=milvus`，无 Milvus 环境自动回退内存向量库 |
-| ColPali 本地模型 | 已下载 | `models/colpali-v1.3`, `scripts/download_colpali_model.py` | 本地模型为 `vidore/colpali-v1.3`，已落盘到 `models/colpali-v1.3` |
-| ColPali late-interaction rerank | 已接入接口 | `src/services.py`, `src/retriever.py` | 支持 `RAG_COLPALI_RERANK_API`，用于 top-k 候选页重排；本地推理服务可基于已下载模型继续封装 |
-| Query rewrite | 已实现 | `src/retriever.py` | 当前包含业务术语替换，可继续扩展 LLM 改写和企业词典 |
-| 文档类型预过滤 | 已实现 | `src/retriever.py` | 支持表单、报表、PPT、手册等类型推断 |
-| GPT-4o-mini function calling Router | 已接入 | `src/llm_client.py`, `src/router.py` | 优先 function calling，失败后 LLM 文本路由，再失败走规则兜底 |
-| 四分支工具编排 | 已实现 | `src/tools.py`, `src/pipeline.py` | `fact_qa` / `multi_page_qa` / `chart_qa` / `translate_qa` |
-| 单图 VLM 问答 | 已接入接口 | `src/services.py`, `src/tools.py` | 支持 `RAG_VLM_API`，未配置时走结构化字段和文本规则 |
-| 多图 VLM 跨页推理 | 已接入接口 | `src/services.py`, `src/tools.py` | 支持多页图像路径输入，未配置时走 people 聚合规则 |
-| chart-parsing 数值解析 | 已接入接口 | `src/services.py`, `src/tools.py` | 支持 `RAG_CHART_PARSING_API`，未配置时走 `chart_data` |
-| 图表数值校验 | 部分完成 | `src/tools.py`, `src/verifier.py` | 已有结构化数值读取和答案可证性校验，真实坐标轴解析依赖外部 chart 服务 |
-| Google Translate | 已接入接口 | `src/services.py`, `src/tools.py` | 支持 `GOOGLE_TRANSLATE_API` 和 `GOOGLE_TRANSLATE_API_KEY` |
-| DeepL | 已接入接口 | `src/services.py`, `src/tools.py` | 支持 `DEEPL_API_KEY` |
-| GPT 翻译 | 已接入 | `src/llm_client.py`, `src/tools.py` | 支持 OpenAI 兼容模型，未配置时走本地翻译候选 |
-| 翻译多引擎并行选优 | 已实现 | `src/tools.py` | 并行 Google / DeepL / GPT 候选，按术语覆盖评分选优 |
-| Verifier 可证性校验 | 已实现 | `src/verifier.py`, `src/pipeline.py` | 优先 VLM verifier，其次 LLM verifier，最后关键词规则 |
-| 未通过扩 top-k 重试 | 已实现 | `src/pipeline.py`, `src/agent_loop.py` | 支持 `RAG_TOPK_RETRY_MULTIPLIER` |
-| Session Memory | 已实现 | `src/memory.py` | 记录历史 QA 和命中页 |
-| Redis Memory | 已接入 | `src/infra/redis_memory.py`, `src/bootstrap.py` | 支持 `RAG_SESSION_BACKEND=redis` 和 TTL |
-| PyMuPDF 建库入口 | 已增强 | `src/infra/pdf_ingest.py` | 支持 PDF 文本抽取和 200 DPI 页图渲染落盘 |
-| 多格式文档建库 | 已增强 | `src/infra/document_ingest.py`, `scripts/build_index_incremental.py` | 支持递归扫描 PDF / XLSX / DOCX / PPTX，并兼容 CSV / TXT；旧版 DOC/XLS/PPT 可通过 LibreOffice 转 PDF |
-| FastAPI 问答服务 | 已实现 | `src/api.py`, `src/interfaces/api.py` | `/ask`、`/health`、`/metrics` |
-| 能力自检接口 | 已新增 | `src/api.py` | `/capabilities` 返回外部服务接入状态和基准指标 |
-| Prometheus 指标 | 已实现 | `src/api.py` | 请求数、耗时、fallback 计数 |
-| Recall@10 | 已实现 | `src/eval_metrics.py`, `src/eval_suite.py` | 支持离线评测集批量计算 |
-| Accuracy | 已实现 | `src/eval_metrics.py`, `src/eval_suite.py` | 归一化 exact match |
-| Router 决策准确率 | 已实现 | `src/eval_metrics.py`, `src/eval_suite.py` | 对比预测分支和金标分支 |
-| 翻译引擎选择准确率 | 已实现指标 | `src/eval_metrics.py` | 需要翻译评测集接入后批量计算 |
-| 七类文档评测任务 | 部分完成 | `src/eval_suite.py` | 当前覆盖报表、表单、PPT、跨语种；图表专项、信息图、看板需补充真实样本 |
+| PDF 功能                              | 当前接入状态 | 工程模块                                                                 | 说明                                                                                 |
+|-------------------------------------|--------|----------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| PDF/PPT 页图统一编码                      | 已接入接口  | `src/services.py`, `src/retriever.py`                                | 支持 `RAG_MULTIMODAL_EMBEDDING_API`，可接 ColPali / MiniCPM-V 页图 embedding 服务           |
+| Text query embedding                | 已接入    | `src/llm_client.py`, `src/services.py`, `src/retriever.py`           | 优先多模态 embedding 服务，其次 OpenAI embedding，最后本地哈希降级                                    |
+| Milvus 向量库                          | 已接入    | `src/infra/vector_store.py`, `src/retriever.py`                      | 支持 `RAG_VECTOR_BACKEND=milvus`，无 Milvus 环境自动回退内存向量库                                |
+| ColPali 本地模型                        | 已下载    | `models/colpali-v1.3`, `scripts/download_colpali_model.py`           | 本地模型为 `vidore/colpali-v1.3`，已落盘到 `models/colpali-v1.3`                             |
+| ColPali late-interaction rerank     | 已接入接口  | `src/services.py`, `src/retriever.py`                                | 支持 `RAG_COLPALI_RERANK_API`，用于 top-k 候选页重排；本地推理服务可基于已下载模型继续封装                      |
+| Query rewrite                       | 已实现    | `src/retriever.py`                                                   | 当前包含业务术语替换，可继续扩展 LLM 改写和企业词典                                                       |
+| 文档类型预过滤                             | 已实现    | `src/retriever.py`                                                   | 支持表单、报表、PPT、手册等类型推断                                                                |
+| GPT-4o-mini function calling Router | 已接入    | `src/llm_client.py`, `src/router.py`                                 | 优先 function calling，失败后 LLM 文本路由，再失败走规则兜底                                          |
+| 四分支工具编排                             | 已实现    | `src/tools.py`, `src/pipeline.py`                                    | `fact_qa` / `multi_page_qa` / `chart_qa` / `translate_qa`                          |
+| 单图 VLM 问答                           | 已接入接口  | `src/services.py`, `src/tools.py`                                    | 支持 `RAG_VLM_API`，未配置时走结构化字段和文本规则                                                   |
+| 多图 VLM 跨页推理                         | 已接入接口  | `src/services.py`, `src/tools.py`                                    | 支持多页图像路径输入，未配置时走 people 聚合规则                                                       |
+| chart-parsing 数值解析                  | 已接入接口  | `src/services.py`, `src/tools.py`                                    | 支持 `RAG_CHART_PARSING_API`，未配置时走 `chart_data`                                      |
+| 图表数值校验                              | 部分完成   | `src/tools.py`, `src/verifier.py`                                    | 已有结构化数值读取和答案可证性校验，真实坐标轴解析依赖外部 chart 服务                                             |
+| Google Translate                    | 已接入接口  | `src/services.py`, `src/tools.py`                                    | 支持 `GOOGLE_TRANSLATE_API` 和 `GOOGLE_TRANSLATE_API_KEY`                             |
+| DeepL                               | 已接入接口  | `src/services.py`, `src/tools.py`                                    | 支持 `DEEPL_API_KEY`                                                                 |
+| GPT 翻译                              | 已接入    | `src/llm_client.py`, `src/tools.py`                                  | 支持 OpenAI 兼容模型，未配置时走本地翻译候选                                                         |
+| 翻译多引擎并行选优                           | 已实现    | `src/tools.py`                                                       | 并行 Google / DeepL / GPT 候选，按术语覆盖评分选优                                               |
+| Verifier 可证性校验                      | 已实现    | `src/verifier.py`, `src/pipeline.py`                                 | 优先 VLM verifier，其次 LLM verifier，最后关键词规则                                            |
+| 未通过扩 top-k 重试                       | 已实现    | `src/pipeline.py`, `src/agent_loop.py`                               | 支持 `RAG_TOPK_RETRY_MULTIPLIER`                                                     |
+| Session Memory                      | 已实现    | `src/memory.py`                                                      | 记录历史 QA 和命中页                                                                       |
+| Redis Memory                        | 已接入    | `src/infra/redis_memory.py`, `src/bootstrap.py`                      | 支持 `RAG_SESSION_BACKEND=redis` 和 TTL                                               |
+| PyMuPDF 建库入口                        | 已增强    | `src/infra/pdf_ingest.py`                                            | 支持 PDF 文本抽取和 200 DPI 页图渲染落盘                                                        |
+| 多格式文档建库                             | 已增强    | `src/infra/document_ingest.py`, `scripts/build_index_incremental.py` | 支持递归扫描 PDF / XLSX / DOCX / PPTX，并兼容 CSV / TXT；旧版 DOC/XLS/PPT 可通过 LibreOffice 转 PDF |
+| FastAPI 问答服务                        | 已实现    | `src/api.py`, `src/interfaces/api.py`                                | `/ask`、`/health`、`/metrics`                                                        |
+| 能力自检接口                              | 已新增    | `src/api.py`                                                         | `/capabilities` 返回外部服务接入状态和基准指标                                                    |
+| Prometheus 指标                       | 已实现    | `src/api.py`                                                         | 请求数、耗时、fallback 计数                                                                 |
+| Recall@10                           | 已实现    | `src/eval_metrics.py`, `src/eval_suite.py`                           | 支持离线评测集批量计算                                                                        |
+| Accuracy                            | 已实现    | `src/eval_metrics.py`, `src/eval_suite.py`                           | 归一化 exact match                                                                    |
+| Router 决策准确率                        | 已实现    | `src/eval_metrics.py`, `src/eval_suite.py`                           | 对比预测分支和金标分支                                                                        |
+| 翻译引擎选择准确率                           | 已实现指标  | `src/eval_metrics.py`                                                | 需要翻译评测集接入后批量计算                                                                     |
+| 七类文档评测任务                            | 部分完成   | `src/eval_suite.py`                                                  | 当前覆盖报表、表单、PPT、跨语种；图表专项、信息图、看板需补充真实样本                                               |
 
 ## 当前精度记录
 
 PDF 中给出的企业级目标 / 历史实验指标：
 
-| 指标 | PDF 目标值 |
-| --- | --- |
-| 七类文档平均 Recall@10 | 89.40% |
-| 七类文档端到端 Accuracy | 58.70% |
-| Router 决策准确率 | 92.00% |
-| translate_qa 通用 domain Accuracy | 80.60% |
-| translate_qa 公司术语 domain Accuracy | 70.40% |
-| 信息图 / 宣传类 Accuracy | TextRAG 约 25%，页图 + Agent 约 51% |
-| 离线单页处理耗时 | OCR 链路约 312ms，页图编码约 121ms |
-| 在线 query 编码 + Milvus 检索 | 约 54ms |
+| 指标                                | PDF 目标值                        |
+|-----------------------------------|--------------------------------|
+| 七类文档平均 Recall@10                  | 89.40%                         |
+| 七类文档端到端 Accuracy                  | 58.70%                         |
+| Router 决策准确率                      | 92.00%                         |
+| translate_qa 通用 domain Accuracy   | 80.60%                         |
+| translate_qa 公司术语 domain Accuracy | 70.40%                         |
+| 信息图 / 宣传类 Accuracy                | TextRAG 约 25%，页图 + Agent 约 51% |
+| 离线单页处理耗时                          | OCR 链路约 312ms，页图编码约 121ms      |
+| 在线 query 编码 + Milvus 检索           | 约 54ms                         |
 
 当前工程可验证指标：
 
-| 指标 | 当前状态 | 说明 |
-| --- | --- | --- |
-| 小样本 Recall@10 | 100.00% | 由 `src/eval_suite.py` 在本地 4 条样本上计算 |
-| 小样本 Accuracy | 100.00% | 由 `src/eval_suite.py` 在本地 4 条样本上计算 |
-| 小样本 Router Accuracy | 100.00% | 由 `src/eval_suite.py` 在本地 4 条样本上计算 |
-| 小样本翻译引擎选择准确率 | 未计算 | 当前默认样本未提供 offline best engine 标注，指标函数已在 `src/eval_metrics.py` 实现 |
-| 企业级七类 Recall@10 | 接口已具备，需接真实评测集 | 当前仓库没有十万级文档与完整金标集 |
-| 企业级七类 Accuracy | 接口已具备，需接真实评测集 | 当前仓库没有完整 VLM 服务与七类标注数据 |
-| 单页 121ms 处理耗时 | 需接真实 embedding 服务压测 | 当前已提供 PyMuPDF 渲染和 embedding 接口 |
-| Milvus 54ms 检索耗时 | 需接 Milvus 环境压测 | 当前已提供 Milvus 后端配置 |
+| 指标                  | 当前状态                | 说明                                                               |
+|---------------------|---------------------|------------------------------------------------------------------|
+| 小样本 Recall@10       | 100.00%             | 由 `src/eval_suite.py` 在本地 4 条样本上计算                               |
+| 小样本 Accuracy        | 100.00%             | 由 `src/eval_suite.py` 在本地 4 条样本上计算                               |
+| 小样本 Router Accuracy | 100.00%             | 由 `src/eval_suite.py` 在本地 4 条样本上计算                               |
+| 小样本翻译引擎选择准确率        | 未计算                 | 当前默认样本未提供 offline best engine 标注，指标函数已在 `src/eval_metrics.py` 实现 |
+| 企业级七类 Recall@10     | 接口已具备，需接真实评测集       | 当前仓库没有十万级文档与完整金标集                                                |
+| 企业级七类 Accuracy      | 接口已具备，需接真实评测集       | 当前仓库没有完整 VLM 服务与七类标注数据                                           |
+| 单页 121ms 处理耗时       | 需接真实 embedding 服务压测 | 当前已提供 PyMuPDF 渲染和 embedding 接口                                   |
+| Milvus 54ms 检索耗时    | 需接 Milvus 环境压测      | 当前已提供 Milvus 后端配置                                                |
 
 ## 环境变量
 

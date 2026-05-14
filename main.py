@@ -1,4 +1,26 @@
 """
+main.py — 命令行演示入口（等同「跑一遍集成测试 + 离线评测」）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- 通过 `offer_agent_core.build_engine` 组装与 `bootstrap.build_engine` 同构的引擎（注意：本文件 import 路径是 `src.offer_agent_core`，与 `uvicorn src.api:app` 入口可并存）。
+- `run_demo`：打印多条典型 query 的 `rewritten_query` / `branch` / `hits` / `verified`，用于面试口述对齐代码。
+- `run_offline_eval`：对应简历「AgentEval / Recall@10 / Accuracy」的**骨架演示**。
+
+================================================================================
+【类比 Android】
+================================================================================
+- 像 `Application` 里开发阶段调用的 **Debug 启动自检** 或 `androidTest` 里 `@Test fun smokePipeline()`。
+- `print_result`：等同 Logcat 结构化日志，把一次请求的「可解释字段」打全。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `if __name__ == "__main__":`：只有「直接 python main.py」时才执行；被 import 时不跑；类似 Java `public static void main` 门闸。
+- `from src.offer_agent_core import ...`：包路径从仓库根开始，需保证 `PYTHONPATH` 或从根目录运行。
+- `def print_result(query: str, result) -> None`：`result` 未注解类型时，IDE 仍可推断；Kotlin 会写 `result: QAResult`。
+
 视觉 RAG Agent 面试演示主程序。
 
 这个入口做两件事：

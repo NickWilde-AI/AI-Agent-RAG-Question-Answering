@@ -1,4 +1,6 @@
-"""Memory 模块映射（兼容入口）。"""
+"""
+engine/memory.py — 薄转发：真源 `src/memory.py`
+"""
 
 from ..memory import *  # noqa: F401,F403
 

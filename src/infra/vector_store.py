@@ -1,4 +1,28 @@
-"""向量存储抽象：支持 InMemory 与 Milvus（可选依赖）。"""
+"""
+vector_store.py — 向量存储抽象：内存实现 + Milvus 实现（可切换）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- 被 `PageRetriever._build_vector_store` 选择：`SETTINGS.vector_backend == "milvus"` 时尝试 Milvus，失败回退内存。
+- `upsert`：建索引时写入向量；`search`：在线检索 top-k（返回 id + score）。
+
+================================================================================
+【类比 Android】
+================================================================================
+- `BaseVectorStore` ≈ **Java `interface VectorStore`**；`InMemoryVectorStore` / `MilvusVectorStore` ≈ 两种 `implements`。
+- 策略切换像 **Debug 用 FakeRepository，Release 用 RealRepository**。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `raise NotImplementedError`：抽象方法无 `@abstractmethod` 装饰时，子类忘了实现会在运行期调用时报错（也可用 ABC）。
+- `Sequence[float]`：`typing` 协议「只读序列」，比 `List[float]` 更宽，接受 tuple / array 视图。
+- `lambda x: x[1]`：`sort` 的 key 函数，取 tuple 第二个元素做排序键；Kotlin `sortedBy { it.second }`。
+- `from pymilvus import MilvusClient` 放在 `__init__` 的 try 里：**延迟 import**，没装依赖时错误信息更友好。
+
+向量存储抽象：支持 InMemory 与 Milvus（可选依赖）。
+"""
 
 from __future__ import annotations
 

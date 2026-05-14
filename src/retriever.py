@@ -1,4 +1,29 @@
 """
+retriever.py — L0 检索：query → top-k 页面（向量 + 规则混合，可接 Milvus / 多模态 embedding）
+
+================================================================================
+【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
+================================================================================
+- `PageRetriever.retrieve`：`pipeline` 第 1 步与 fallback 第 2 次检索都走这里。
+- `rewrite_query`：对应简历「query rewrite + 术语词典」的 demo 版（字符串替换）。
+- `infer_doc_type`：对应「文档类型预过滤」的轻量推断。
+- `_embed_page` / `_build_index`：演示可接 **MultimodalEmbeddingClient**（ColPali/MiniCPM-V HTTP）；失败则哈希向量，保证离线可跑。
+
+================================================================================
+【类比 Android】
+================================================================================
+- `PageRetriever` ≈ **Repository**：对上暴露 `retrieve`，对下接「向量库 Client + 外部 Embedding HTTP」。
+- `_build_index` ≈ WorkManager **一次性同步任务**：启动时把 JSON 页面向量化写入 `vector_store`。
+- `numpy` 向量点积 ≈ `float[]` 做 cosine 前的归一化点积，数学同构。
+
+================================================================================
+【从 Java/Kotlin 读 Python：本文件用到的语法】
+================================================================================
+- `path: str | Path`：联合类型参数；也可用 `Union[str, Path]`。
+- `Page(**item)`：**字典解包**成关键字参数，类似 Gson `fromJson` 映射到 data class 构造器（字段名需一致）。
+- `[Page(**item) for item in data]`：列表推导，≈ `stream().map(...).toList()`。
+- `np.ndarray` / `dtype=np.float32`：NumPy 强类型浮点数组，类似 `float[]` 但带 shape。
+
 检索模块（模拟“多模态页面 embedding + 向量检索”）。
 
 说明：

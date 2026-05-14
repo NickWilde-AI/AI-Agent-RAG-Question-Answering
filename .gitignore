@@ -38,6 +38,9 @@ models/
 *.pdf
 Untitled
 
+# 简历全文 Markdown（由 PDF 抽取生成，勿提交）
+陈鹏_AI Agent_华北理工_5年.md
+
 # 面试/个人整理类 Markdown（可按需删行改为提交）
 面试文档总入口.md
 安卓开发者友好版-项目理解.md
