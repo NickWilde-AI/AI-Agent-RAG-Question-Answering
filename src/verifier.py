@@ -93,6 +93,10 @@ class Verifier:
         return None
 
     def verify(self, answer: str, pages: List[Page]) -> bool:
+        # 规则兜底长摘录不应被判定为“已回答问题”
+        if "【关键摘录（最多2条）】" in answer or "暂未生成稳定归纳答案" in answer:
+            return False
+
         image_paths = [p.image_path for p in pages if p.image_path]
         vlm = VLMClient()
         if image_paths and vlm.enabled:

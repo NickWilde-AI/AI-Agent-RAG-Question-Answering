@@ -111,6 +111,50 @@ class QAEngine:
     # 白话：最近一次「生成答案」时用到的源文件名列表；_run_branch 往里填，ask 末尾读出来写进 QAResult
     _last_source_files: List[str] = field(default_factory=list, init=False, repr=False)
 
+    @staticmethod
+    def _is_smalltalk_query(query: str) -> bool:
+        """识别明显闲聊/自我指代问题，避免误触发知识库检索。"""
+        q = (query or "").strip().lower()
+        if not q:
+            return True
+        exact = {
+            "你好",
+            "hi",
+            "hello",
+            "在吗",
+            "你是谁",
+            "你的名字",
+            "你的年龄",
+            "你几岁",
+            "介绍一下你自己",
+        }
+        if q in exact:
+            return True
+        return any(x in q for x in ["你是谁", "你的名字", "你的年龄", "你几岁"])
+
+    @staticmethod
+    def _fallback_smalltalk_answer() -> str:
+        return (
+            "我是企业知识库问答助手，擅长根据已入库文档回答业务问题。"
+            "这类闲聊问题不在知识库检索范围内，请改为提问具体文档内容。"
+        )
+
+    @staticmethod
+    def _is_low_confidence(hits: List[RetrievalHit]) -> bool:
+        """
+        命中置信度过低时直接拒答，避免把无关材料拼接成长摘录。
+        分值阈值按当前混合打分经验值设置，后续可在评测集上再调优。
+        """
+        if not hits:
+            return True
+        top1 = hits[0].score
+        # top1 偏低且与第二名差距很小，通常代表“找不到明确证据页”
+        if top1 < 0.35:
+            return True
+        if len(hits) >= 2 and top1 < 0.45 and abs(top1 - hits[1].score) < 0.03:
+            return True
+        return False
+
     def _source_file_names(self, pages: List[Page]) -> List[str]:
         """
         白话：从一批 Page 里整理出「人类可读的文件名」列表（去重），给接口展示「依据了哪些文件」。
@@ -229,8 +273,41 @@ class QAEngine:
         4) verifier 校验 answer 是否可信（相当于“业务校验/风控”）
         5) 失败则 fallback：扩 top-k 重试一次（相当于“降级/重试策略”）
         """
+        # --- 前置拦截：闲聊/自我指代类问题不走知识库 ---
+        if self._is_smalltalk_query(query):
+            result = QAResult(
+                query=query,
+                rewritten_query=query,
+                branch=RouterAgent.BRANCH_FACT,
+                answer=self._fallback_smalltalk_answer(),
+                verified=False,
+                hits=[],
+                retry_hits=None,
+                source_files=[],
+            )
+            self.memory.add_record(result)
+            return result
+
         # --- 第 1 步：检索（白话：去向量库按相似度拿回 top-k 条「哪一页」）---
         rewritten_query, hits = self.retriever.retrieve(query=query, topk=topk)
+
+        if self._is_low_confidence(hits):
+            answer = (
+                "材料中未找到足够依据来回答该问题。"
+                "请补充更具体的关键词（文档名、字段名、时间、模块名）后再试。"
+            )
+            result = QAResult(
+                query=query,
+                rewritten_query=rewritten_query,
+                branch=RouterAgent.BRANCH_FACT,
+                answer=answer,
+                verified=False,
+                hits=hits,
+                retry_hits=None,
+                source_files=[],
+            )
+            self.memory.add_record(result)
+            return result
 
         # --- 第 2 步：路由（白话：判断这道题更像单页事实 / 多页 / 图表 / 翻译里的哪一种）---
         branch = self.router.route(query)

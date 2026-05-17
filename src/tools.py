@@ -39,6 +39,7 @@ tools.py — L2 生成：四条分支工具（fact / multi_page / chart / transl
 from __future__ import annotations
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -47,6 +48,8 @@ from .config import SETTINGS
 from .llm_client import LLMClient
 from .models import Page
 from .services import ChartParsingClient, TranslationEngineClient, VLMClient
+
+logger = logging.getLogger(__name__)
 
 
 def _best_matching_token(query: str, candidates: List[str]) -> str:
@@ -83,28 +86,28 @@ def _fact_fallback_formatted(query: str, pages: List[Page]) -> str:
     qshort = (query or "").strip()
     if len(qshort) > 240:
         qshort = qshort[:240] + "…"
-    lines.append("【简要结论】")
+    lines.append("【当前结果】")
     lines.append(f"问题：{qshort or '（空）'}")
-    lines.append("以下为检索命中的材料节选（按文档拆分）。完整语义归纳依赖大模型 API；若本节过长，可降低 top-k。")
+    lines.append("暂未生成稳定归纳答案，先返回命中证据供你核对。")
     lines.append("")
-    lines.append("【依据文档】")
+    lines.append("【命中文档】")
     for n in doc_names:
         lines.append(f"- {n}")
     lines.append("")
-    lines.append("【材料摘录】")
-    for i, p in enumerate(pages[:8], 1):
+    lines.append("【关键摘录（最多2条）】")
+    for i, p in enumerate(pages[:2], 1):
         fname = _doc_full_name(p)
         meta_title = (p.metadata or {}).get("title") or ""
         label = meta_title.strip() or p.page_id
         raw = (p.content or "").strip()
-        excerpt = " ".join(raw.split())[:320]
-        if len(raw) > 320:
+        excerpt = " ".join(raw.split())[:220]
+        if len(raw) > 220:
             excerpt += "…"
         lines.append(f"{i}. 《{fname}》｜{label}")
         lines.append(f"   {excerpt}")
         lines.append("")
-    lines.append("【说明】")
-    lines.append("当前为规则兜底展示。若希望自动归纳成流畅段落，请配置可用的 OPENAI_API_KEY / OPENAI_BASE_URL。")
+    lines.append("【下一步建议】")
+    lines.append("请把问题改得更具体（字段名/章节名/时间范围），或确认 OPENAI_API_KEY / OPENAI_BASE_URL 可用。")
     return "\n".join(lines).strip()
 
 
@@ -161,8 +164,8 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
                 )
                 if synthesized:
                     return synthesized
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("fact_qa llm synthesis failed, fallback to formatted snippets: %s", exc)
 
     if len(pages) == 1 and pages[0].fields:
         page = pages[0]
@@ -189,8 +192,8 @@ def multi_page_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None
             answer = vlm.answer(query=query, image_paths=image_paths[:3], mode="multi_page")
             if answer:
                 return answer
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("multi_page_qa llm synthesis failed, fallback to rule mode: %s", exc)
 
     if llm and llm.enabled and pages:
         try:
