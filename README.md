@@ -176,10 +176,16 @@ python scripts/build_index_incremental.py \
 python scripts/list_user_docs_catalog.py --input-dir user_docs --output data/user_docs_catalog.txt
 ```
 
-**清空旧索引并重建**：本地检索依赖 `data/user_pages.json`、`data/index_manifest.json` 与 `kb_pages/` 下的页面截图；删除这些后再跑上面的增量建库命令即可「换血」（原始文档仍在 `user_docs/`）：
+**清空旧索引并全量重建**（原始文档仍在 `user_docs/`）：
 
 ```bash
-bash scripts/reset_kb_local.sh
+RAG_FORCE_REBUILD_KB=1 bash scripts/one_click_demo.sh
+```
+
+日常启动与增量建库（含从 `user_docs/` 删除的文件自动清理）只需：
+
+```bash
+bash scripts/one_click_demo.sh
 ```
 
 ---

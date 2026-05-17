@@ -3,10 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# 默认轻量模式（普通模式）：不拉 ColPali 依赖、不启 ColPali 服务、不启 Docker Redis，
-# 并在启动 API 时强制关闭「逐页远程 embedding / 多模态 embedding / ColPali / Plan Loop」，
-# 避免大库启动或问答时把整机拖死。
-# 需要 ColPali + Redis 全量链路时：RAG_LITE_MODE=0 bash scripts/one_click_demo.sh
+# 一键入口：依赖安装 → user_docs 建库 → 启动 API（日常只跑本脚本即可）。
+# 可选环境变量：
+#   RAG_FORCE_REBUILD_KB=1  清空 data/user_pages.json、manifest、kb_pages 后全量重建
+#   RAG_SKIP_INDEX_BUILD=1  跳过建库，沿用已有索引
+#   RAG_LITE_MODE=0         启用 ColPali + Redis 全量链路
+# 轻量模式尊重 .env 中 RAG_ENABLE_REAL_EMBEDDING；大库逐页 embedding 启动较慢，见 logs/api.log
 : "${RAG_LITE_MODE:=1}"
 
 # pip：访问 pypi.org 若出现 SSLEOFError / 超时，默认走清华镜像；强制官方源：RAG_USE_PYPI_MIRROR=0
@@ -67,28 +69,79 @@ RAG_SKIP_INDEX_BUILD="${RAG_SKIP_INDEX_BUILD:-0}"
 
 mkdir -p user_docs kb_pages data
 
-echo "== 增量建库（递归处理 PDF / XLSX / DOCX / PPT）=="
-doc_count="$(python - <<'PY'
-from pathlib import Path
-exts = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".pptx", ".ppt", ".txt"}
-root = Path("user_docs")
-print(sum(1 for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts))
-PY
-)"
-if [ "${RAG_SKIP_INDEX_BUILD}" = "1" ]; then
-  echo "已跳过（RAG_SKIP_INDEX_BUILD=1），使用已有 data/user_pages.json 或 demo_pages.json"
-elif [ "$doc_count" -gt 0 ]; then
-  echo "发现可建库文档 $doc_count 个，开始增量处理…（大 PDF 多时可能需数分钟）"
-  # 页图 DPI：默认 144；高质量：RAG_BUILD_DPI=200 …（:- 避免 set -u 下 .env 未声明时报错）
+run_index_build() {
   python scripts/build_index_incremental.py \
     --input-dir user_docs \
     --output-pages data/user_pages.json \
     --manifest data/index_manifest.json \
     --image-dir kb_pages \
     --lang zh \
-    --dpi "${RAG_BUILD_DPI:-144}"
+    --dpi "${RAG_BUILD_DPI:-144}" \
+    --clean-removed
+}
+
+count_user_docs() {
+  python - <<'PY'
+from pathlib import Path
+exts = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".pptx", ".ppt", ".txt"}
+root = Path("user_docs")
+print(sum(1 for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts))
+PY
+}
+
+count_index_pages() {
+  python - <<'PY'
+import json
+from pathlib import Path
+p = Path("data/user_pages.json")
+if not p.exists():
+    print(0)
+else:
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        print(len(data) if isinstance(data, list) else 0)
+    except Exception:
+        print(0)
+PY
+}
+
+echo "== 知识库建库（user_docs → data/user_pages.json）=="
+doc_count="$(count_user_docs)"
+RAG_FORCE_REBUILD_KB="${RAG_FORCE_REBUILD_KB:-0}"
+
+if [ "${RAG_SKIP_INDEX_BUILD}" = "1" ]; then
+  echo "已跳过建库（RAG_SKIP_INDEX_BUILD=1），使用已有 data/user_pages.json 或 demo_pages.json"
+elif [ "$doc_count" -eq 0 ]; then
+  echo "user_docs/ 无文档，跳过建库；问答将使用 data/demo_pages.json（若存在）"
 else
-  echo "未发现可建库文档，跳过增量建库，默认使用 data/demo_pages.json"
+  if [ "${RAG_FORCE_REBUILD_KB}" = "1" ]; then
+    echo "RAG_FORCE_REBUILD_KB=1：清空本地索引后全量重建…"
+    rm -f data/user_pages.json data/index_manifest.json
+    rm -rf kb_pages/*
+    mkdir -p kb_pages
+  else
+  page_count="$(count_index_pages)"
+  if [ "$page_count" -eq 0 ] && [ -f data/index_manifest.json ]; then
+    echo "检测到页面索引为空但 manifest 仍在，自动清理 manifest 避免建库被跳过…"
+    rm -f data/index_manifest.json
+  fi
+  fi
+
+  echo "发现可建库文档 ${doc_count} 个，开始处理（大 PDF 可能需数分钟）…"
+  run_index_build
+
+  page_count="$(count_index_pages)"
+  if [ "$page_count" -eq 0 ]; then
+    echo "建库后仍为 0 页，自动再试一次全量重建…"
+    rm -f data/index_manifest.json data/user_pages.json
+    run_index_build
+    page_count="$(count_index_pages)"
+  fi
+  if [ "$page_count" -eq 0 ]; then
+    echo "错误：建库失败，data/user_pages.json 仍为空。请检查 user_docs 内文件是否可解析，或查看上方 WARN。" >&2
+    exit 1
+  fi
+  echo "建库完成：共 ${page_count} 页（data/user_pages.json）"
 fi
 
 if [ "${RAG_LITE_MODE}" != "0" ]; then
@@ -104,24 +157,59 @@ fi
 echo "== 启动 FastAPI 主服务 =="
 pkill -f "uvicorn offer_agent.api:app" >/dev/null 2>&1 || true
 free_port 8000
+
+REAL_EMB="${RAG_ENABLE_REAL_EMBEDDING:-false}"
+if [ "${REAL_EMB}" = "true" ] || [ "${REAL_EMB}" = "1" ]; then
+  page_count="$(python - <<'PY'
+import json
+from pathlib import Path
+for p in (Path("data/user_pages.json"), Path("data/demo_pages.json")):
+    if p.exists():
+        print(len(json.loads(p.read_text(encoding="utf-8"))))
+        break
+else:
+    print(0)
+PY
+)"
+  echo " - 文本向量: 已启用（.env RAG_ENABLE_REAL_EMBEDDING=${REAL_EMB}，模型 ${OPENAI_EMBEDDING_MODEL:-未设置}）"
+  if [ "${page_count}" -gt 50 ]; then
+    echo " - 提示: 索引约 ${page_count} 页，启动时将逐页请求 embedding，可能需数分钟；日志见 logs/api.log"
+  fi
+else
+  echo " - 文本向量: 本地哈希模拟（.env 设 RAG_ENABLE_REAL_EMBEDDING=true 可改用 DashScope 等）"
+fi
+
 if [ "${RAG_LITE_MODE}" != "0" ]; then
-  # 强制覆盖 .env 里可能仍为 true 的重型开关，避免再次卡死
-  nohup env \
-    RAG_ENABLE_REAL_EMBEDDING=false \
+  # 轻量：仅关闭 GPU/多模态/ColPali/Loop；RAG_ENABLE_REAL_EMBEDDING 沿用 .env
+  nohup env PYTHONUNBUFFERED=1 \
     RAG_ENABLE_MULTIMODAL_EMBEDDING=false \
     RAG_ENABLE_COLPALI_RERANK=false \
     RAG_COLPALI_RERANK_API= \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
     .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 else
-  nohup env RAG_ENABLE_REAL_EMBEDDING=false RAG_ENABLE_MULTIMODAL_EMBEDDING=false \
+  nohup env PYTHONUNBUFFERED=1 \
+    RAG_ENABLE_MULTIMODAL_EMBEDDING=false \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
-    RAG_ENABLE_COLPALI_RERANK=true RAG_COLPALI_RERANK_API=http://127.0.0.1:9001/rerank \
+    RAG_ENABLE_COLPALI_RERANK=true \
+    RAG_COLPALI_RERANK_API=http://127.0.0.1:9001/rerank \
     .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 fi
 
-echo "等待服务启动..."
-for _ in $(seq 1 30); do
+# 真实 embedding 建索引较慢，按页数延长健康检查等待
+health_wait=30
+if [ "${REAL_EMB}" = "true" ] || [ "${REAL_EMB}" = "1" ]; then
+  health_wait=600
+  if [ "${page_count:-0}" -gt 200 ]; then
+    # 约 2s/页上限估算，最多等 2 小时
+    est=$((page_count * 2))
+    if [ "$est" -gt 7200 ]; then est=7200; fi
+    if [ "$est" -gt "$health_wait" ]; then health_wait="$est"; fi
+  fi
+fi
+
+echo "等待服务启动（最多 ${health_wait}s，真实 embedding 时请耐心）..."
+for _ in $(seq 1 "${health_wait}"); do
   if curl -sS --max-time 2 "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
     if [ "${RAG_LITE_MODE}" != "0" ]; then
       break
@@ -150,7 +238,11 @@ CF_PUBLIC_URL=""
 echo ""
 echo "✅ 本地服务已启动（RAG_LITE_MODE=${RAG_LITE_MODE}）"
 if [ "${RAG_LITE_MODE}" != "0" ]; then
-  echo " - 模式: 轻量（哈希检索 + 规则路由，无 ColPali）"
+  if [ "${REAL_EMB}" = "true" ] || [ "${REAL_EMB}" = "1" ]; then
+    echo " - 模式: 轻量 + 远程文本 embedding（${OPENAI_EMBEDDING_MODEL:-} / 无 ColPali）"
+  else
+    echo " - 模式: 轻量（哈希检索 + 规则路由，无 ColPali）"
+  fi
 else
   colpali_status="$(curl -sS --max-time 2 http://127.0.0.1:9001/health 2>/dev/null || true)"
   if echo "$colpali_status" | grep -q '"model_status":"ready"'; then

@@ -173,6 +173,12 @@ def main() -> None:
         doc_to_pages.setdefault(page.doc_id, []).append(page)
 
     doc_files = scan_documents(input_dir)
+    if not old_pages and doc_files and old_manifest:
+        print(
+            "[增量建库] 页面索引为空但 manifest 仍存在，已忽略旧 manifest，将对 user_docs 全量解析",
+            flush=True,
+        )
+        old_manifest = {}
     active_file_keys = set(str(p.resolve()) for p in doc_files)
     new_manifest: Dict[str, Dict[str, str]] = {}
 
