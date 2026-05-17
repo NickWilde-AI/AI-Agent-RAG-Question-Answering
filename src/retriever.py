@@ -220,10 +220,25 @@ class PageRetriever:
         这里为了可运行，把“页图 embedding”用 `page.content` 的 hash 向量模拟。
         你面试时可以说：接口和流程是对齐的，只是底层实现是 mock。
         """
-        for page in self.pages:
+        total = len(self.pages)
+        use_remote = bool(
+            SETTINGS.enable_real_embedding
+            and self.llm_client
+            and self.llm_client.enabled
+        ) or self.multimodal_client.enabled
+        if total > 20 and use_remote:
+            print(
+                f"[PageRetriever] 正在为 {total} 页构建向量（远程 embedding 较慢，完成后才会开放 /health）…",
+                flush=True,
+            )
+        for i, page in enumerate(self.pages, start=1):
             vec = self._embed_page(page)
             self.page_vectors[page.page_id] = vec
             self.vector_store.upsert(page.page_id, vec.tolist())
+            if use_remote and total > 20 and (i == 1 or i % 50 == 0 or i == total):
+                print(f"[PageRetriever] 向量进度 {i}/{total}", flush=True)
+        if total > 20 and use_remote:
+            print(f"[PageRetriever] 向量索引完成，共 {total} 页", flush=True)
 
     def rewrite_query(self, query: str) -> str:
         """
