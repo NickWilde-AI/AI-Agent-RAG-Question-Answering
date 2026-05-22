@@ -25,15 +25,23 @@ from ..core.models import Page, QAResult, RetrievalHit
 from ..engine.agent_loop import LoopRunResult, LoopStep, PlanExecuteAgentLoop
 from ..engine.bootstrap import build_agent_loop, build_engine
 from ..engine.eval_metrics import accuracy, average, recall_at_k
-from ..eval_suite import DEFAULT_EVAL_SAMPLES, EvalSample, run_eval_suite
+from ..eval_suite import (
+    DEFAULT_EVAL_SAMPLES,
+    EvalCategorySummary,
+    EvalEngineeringSummary,
+    EvalRunReport,
+    EvalSample,
+    run_eval_report,
+    run_eval_suite,
+)
 from ..engine.llm_client import LLMClient
 from ..engine.memory import SessionMemory
 from ..engine.pipeline import QAEngine
 from ..engine.retriever import PageRetriever
 from ..engine.router import RouterAgent
-from ..engine.tools import chart_qa, fact_qa, multi_page_qa, translate_qa
+from ..engine.tools import chart_qa, fact_qa, multi_page_qa
 from ..engine.verifier import Verifier
-from ..services import ChartParsingClient, ColPaliRerankClient, MultimodalEmbeddingClient, TranslationEngineClient, VLMClient
+from ..services import ChartParsingClient, ColPaliRerankClient, MultimodalEmbeddingClient, VLMClient
 from ..infra.pdf_ingest import ingest_pdf_with_pymupdf
 from ..infra.vector_store import InMemoryVectorStore, MilvusVectorStore
 
@@ -63,14 +71,16 @@ __all__ = [
     "fact_qa",
     "multi_page_qa",
     "chart_qa",
-    "translate_qa",
     "MultimodalEmbeddingClient",
     "ColPaliRerankClient",
     "VLMClient",
     "ChartParsingClient",
-    "TranslationEngineClient",
     "EvalSample",
+    "EvalCategorySummary",
+    "EvalEngineeringSummary",
+    "EvalRunReport",
     "DEFAULT_EVAL_SAMPLES",
+    "run_eval_report",
     "run_eval_suite",
 ]
 

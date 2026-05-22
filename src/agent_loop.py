@@ -92,7 +92,7 @@ class PlanExecuteAgentLoop:
         self.engine = engine
         self.max_loops = max_loops
 
-    def run(self, query: str, topk: int = SETTINGS.topk_default) -> LoopRunResult:
+    def run(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default") -> LoopRunResult:
         # 白话：脚印空列表；current_topk = 这一轮打算「最多捞几页材料」
         steps: List[LoopStep] = []
         current_topk = topk
@@ -100,7 +100,7 @@ class PlanExecuteAgentLoop:
 
         for step_no in range(1, self.max_loops + 1):
             # 白话：用当前的「捞页数量」跑**完整一整遍**问答案（内部该验的都会验）
-            last_result = self.engine.ask(query=query, topk=current_topk)
+            last_result = self.engine.ask(query=query, topk=current_topk, session_id=session_id)
             # 白话：记一行脚印，方便你知道这一轮用了多少页、验过没
             steps.append(
                 LoopStep(

@@ -29,6 +29,7 @@ api.py — HTTP 入口（FastAPI）：把浏览器 / curl 请求转给编排引�
 
 from __future__ import annotations
 
+from datetime import datetime
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -41,11 +42,19 @@ from starlette.responses import FileResponse, Response
 
 from .bootstrap import build_agent_loop, build_engine
 from .config import SETTINGS
+from .eval_suite import DEFAULT_EVAL_SAMPLES, run_eval_report
+from .infra.eval_report_store import load_latest_eval_report, save_eval_report
 
-# 指标保持最小集合：总请求数 + 耗时 + 回退次数
+# 指标：总请求、耗时、回退、路由、校验、缓存、阶段耗时
 REQ_COUNT = Counter("rag_requests_total", "Total requests", ["branch", "verified"])
 REQ_LATENCY = Histogram("rag_request_latency_seconds", "Request latency seconds")
 FALLBACK_COUNT = Counter("rag_fallback_total", "Fallback retries triggered")
+ROUTER_COUNT = Counter("rag_router_total", "Router decision totals", ["route_branch", "final_branch"])
+VERIFY_COUNT = Counter("rag_verify_total", "Verifier pass/fail totals", ["verified"])
+CACHE_HIT_COUNT = Counter("rag_cache_hit_total", "Session cache hit totals")
+RETRY_REASON_COUNT = Counter("rag_retry_reason_total", "Retry reason totals", ["reason"])
+STAGE_LATENCY = Histogram("rag_stage_latency_seconds", "Per stage latency", ["stage"])
+EVAL_RUN_COUNT = Counter("rag_eval_run_total", "Offline eval run totals")
 
 app = FastAPI(title="Visual RAG Agent API", version="0.1.0")
 app.add_middleware(
@@ -65,6 +74,7 @@ class AskRequest(BaseModel):
     """问答请求模型。"""
 
     query: str = Field(..., min_length=1, description="用户问题")
+    session_id: str = Field(default="default", min_length=1, max_length=128, description="会话 ID")
     topk: Optional[int] = Field(default=None, ge=1, le=20, description="可选 top-k")
 
 
@@ -78,8 +88,23 @@ class AskResponse(BaseModel):
     hits: List[Dict[str, Any]]
     retry_hits: Optional[List[Dict[str, Any]]] = None
     loop_steps: Optional[List[Dict[str, Any]]] = None
+    trace: Optional[Dict[str, Any]] = None
     cost_ms: int
     source_files: List[str] = Field(default_factory=list, description="本次回答依据的源文件完整文件名（去重）")
+
+
+class EvalRunRequest(BaseModel):
+    persist: bool = Field(default=True, description="是否保存评测报告到本地文件")
+    tag: str = Field(default="", max_length=64, description="评测标签（用于文件名后缀）")
+
+
+class EvalRunResponse(BaseModel):
+    created_at: str
+    persisted: bool
+    report_path: Optional[str] = None
+    summary: Dict[str, Any]
+    per_category: List[Dict[str, Any]]
+    engineering: Dict[str, Any]
 
 
 @app.get("/health")
@@ -110,17 +135,14 @@ def capabilities() -> Dict[str, Any]:
         "function_calling_router": bool(SETTINGS.enable_function_calling_router and SETTINGS.openai_api_key),
         "vlm": bool(SETTINGS.vlm_api),
         "chart_parsing": bool(SETTINGS.chart_parsing_api),
-        "google_translate": bool(SETTINGS.google_translate_api and SETTINGS.google_translate_api_key),
-        "deepl": bool(SETTINGS.deepl_api_key),
         "local_colpali_model": Path(SETTINGS.colpali_model_dir).exists(),
         "local_colpali_model_dir": SETTINGS.colpali_model_dir,
         "redis_memory": SETTINGS.session_backend == "redis",
+        "session_cache": SETTINGS.enable_session_cache,
         "benchmark": {
             "recall_at_10": SETTINGS.benchmark_recall_at_10,
             "accuracy": SETTINGS.benchmark_accuracy,
             "router_accuracy": SETTINGS.benchmark_router_accuracy,
-            "translate_general_accuracy": SETTINGS.benchmark_translate_general_accuracy,
-            "translate_domain_accuracy": SETTINGS.benchmark_translate_domain_accuracy,
         },
     }
 
@@ -131,13 +153,64 @@ def metrics() -> Response:
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@app.post("/eval/run", response_model=EvalRunResponse)
+def eval_run(req: EvalRunRequest) -> EvalRunResponse:
+    """触发离线评测并可选落盘，支持提测归档。"""
+    report = run_eval_report(engine)
+    EVAL_RUN_COUNT.inc()
+    report_path: Optional[str] = None
+    if req.persist:
+        saved = save_eval_report(
+            report,
+            data_path=_data_path,
+            sample_count=len(DEFAULT_EVAL_SAMPLES),
+            tag=req.tag,
+        )
+        report_path = str(saved)
+    return EvalRunResponse(
+        created_at=datetime.now().isoformat(timespec="seconds"),
+        persisted=req.persist,
+        report_path=report_path,
+        summary=report.overall.as_percent(),
+        per_category=[
+            {
+                "category": x.category,
+                "sample_count": x.sample_count,
+                "recall_at_10": x.recall_at_10,
+                "accuracy": x.accuracy,
+                "router_acc": x.router_acc,
+                "verifier_pass_rate": x.verifier_pass_rate,
+                "fallback_rate": x.fallback_rate,
+            }
+            for x in report.per_category
+        ],
+        engineering={
+            "sample_count": report.engineering.sample_count,
+            "verifier_pass_rate": report.engineering.verifier_pass_rate,
+            "fallback_rate": report.engineering.fallback_rate,
+            "cache_hit_rate": report.engineering.cache_hit_rate,
+            "avg_stage_latency_ms": report.engineering.avg_stage_latency_ms,
+        },
+    )
+
+
+@app.get("/eval/last")
+def eval_last() -> Dict[str, Any]:
+    """读取最近一次落盘评测报告。"""
+    payload = load_latest_eval_report()
+    if not payload:
+        return {"exists": False, "message": "no eval report found"}
+    return {"exists": True, **payload}
+
+
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
     """核心问答接口。"""
     start = time.perf_counter()
     loop_steps: Optional[List[Dict[str, Any]]] = None
+    sid = req.session_id
     if SETTINGS.enable_plan_execute_loop:
-        loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default)
+        loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid)
         result = loop_run.result
         loop_steps = [
             {
@@ -150,13 +223,24 @@ def ask(req: AskRequest) -> AskResponse:
             for s in loop_run.steps
         ]
     else:
-        result = engine.ask(req.query, topk=req.topk) if req.topk else engine.ask(req.query)
+        if req.topk:
+            result = engine.ask(req.query, topk=req.topk, session_id=sid)
+        else:
+            result = engine.ask(req.query, session_id=sid)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     if result.retry_hits:
         FALLBACK_COUNT.inc()
+    if result.branch == "cache_hit":
+        CACHE_HIT_COUNT.inc()
+    VERIFY_COUNT.labels(verified=str(result.verified).lower()).inc()
     REQ_COUNT.labels(branch=result.branch, verified=str(result.verified).lower()).inc()
     REQ_LATENCY.observe(elapsed_ms / 1000.0)
+    if result.trace:
+        RETRY_REASON_COUNT.labels(reason=result.trace.retry_reason or "none").inc()
+        ROUTER_COUNT.labels(route_branch=result.trace.route_branch, final_branch=result.branch).inc()
+        for st in result.trace.stages:
+            STAGE_LATENCY.labels(stage=st.stage).observe(max(st.elapsed_ms, 0) / 1000.0)
 
     return AskResponse(
         answer=result.answer,
@@ -166,6 +250,23 @@ def ask(req: AskRequest) -> AskResponse:
         hits=[{"page_id": h.page_id, "score": h.score} for h in result.hits],
         retry_hits=[{"page_id": h.page_id, "score": h.score} for h in result.retry_hits] if result.retry_hits else None,
         loop_steps=loop_steps,
+        trace=(
+            {
+                "route_branch": result.trace.route_branch,
+                "fallback_triggered": result.trace.fallback_triggered,
+                "retry_reason": result.trace.retry_reason,
+                "stages": [
+                    {
+                        "stage": s.stage,
+                        "elapsed_ms": s.elapsed_ms,
+                        "detail": s.detail,
+                    }
+                    for s in result.trace.stages
+                ],
+            }
+            if result.trace
+            else None
+        ),
         cost_ms=elapsed_ms,
         source_files=result.source_files,
     )

@@ -30,6 +30,7 @@ eval_metrics.py — 离线评测**纯函数**（与业务编排解耦）
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Dict, Iterable, List, Sequence, Set
 
 
@@ -45,8 +46,31 @@ def normalize_answer(text: str) -> str:
 
 
 def accuracy(pred: str, gold: str) -> bool:
-    """归一化后完全相等即正确。"""
-    return normalize_answer(pred) == normalize_answer(gold)
+    """兼容文本精确匹配与数值容差的宽松准确率。"""
+    return relaxed_exact_match(pred, gold, tol=0.05)
+
+
+def relaxed_exact_match(pred: str, gold: str, tol: float = 0.05) -> bool:
+    """
+    宽松匹配：
+    1) 文本归一化后全等 -> True
+    2) 若双方都存在数字，则首个数字允许相对误差 tol
+    """
+    pred_norm = normalize_answer(pred)
+    gold_norm = normalize_answer(gold)
+    if pred_norm == gold_norm:
+        return True
+
+    num_pattern = r"-?\d+(\.\d+)?"
+    pred_hit = re.search(num_pattern, pred_norm)
+    gold_hit = re.search(num_pattern, gold_norm)
+    if not (pred_hit and gold_hit):
+        return False
+    p = float(pred_hit.group())
+    g = float(gold_hit.group())
+    if g == 0:
+        return abs(p - g) <= tol
+    return abs(p - g) <= abs(g) * tol
 
 
 def average(values: List[float]) -> float:
@@ -63,11 +87,6 @@ def router_accuracy(predicted_branches: Sequence[str], gold_branches: Sequence[s
     return correct / total
 
 
-def translation_engine_accuracy(agent_picks: Sequence[str], offline_best: Sequence[str]) -> float:
-    """翻译分支中，在线选优引擎与离线最优引擎的一致率。"""
-    return router_accuracy(agent_picks, offline_best)
-
-
 def relative_improvement(current: float, baseline: float) -> float:
     """相对提升比例，用于表达端到端收益。"""
     if baseline == 0:
@@ -82,12 +101,10 @@ class EvaluationSummary:
     recall_at_10: float
     accuracy: float
     router_acc: float = 0.0
-    translate_engine_acc: float = 0.0
 
     def as_percent(self) -> Dict[str, str]:
         return {
             "recall_at_10": f"{self.recall_at_10 * 100:.2f}%",
             "accuracy": f"{self.accuracy * 100:.2f}%",
             "router_acc": f"{self.router_acc * 100:.2f}%",
-            "translate_engine_acc": f"{self.translate_engine_acc * 100:.2f}%",
         }

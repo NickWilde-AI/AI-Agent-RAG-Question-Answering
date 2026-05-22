@@ -36,7 +36,7 @@ SEVEN_DOC_TYPES = [
     "infographic",  # 信息图与宣传页
     "dashboard",    # 数据看板与曲线
     "ppt",          # 培训与汇报PPT
-    "manual",       # 跨语种手册
+    "manual",
 ]
 
 

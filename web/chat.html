@@ -334,6 +334,44 @@
       color: var(--muted);
       margin-top: 6px;
     }
+    .eval-panel {
+      margin-top: 14px;
+      border-top: 1px dashed var(--border);
+      padding-top: 12px;
+    }
+    .eval-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .eval-log {
+      margin: 0;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-height: 140px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--muted);
+    }
+    .trace-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .trace-table th, .trace-table td {
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .trace-table th { background: #eef3ff; color: #2d3955; }
     .toolbar {
       border-top: 1px solid var(--border);
       padding: 12px 14px;
@@ -397,8 +435,15 @@
           <button class="chip" data-q="采购申请单的采购单号是多少？">采购单号</button>
           <button class="chip" data-q="2024Q3 经营分析里哪个产品线销售额最高？">经营分析</button>
           <button class="chip" data-q="谁负责介绍了实验/试点安排？">跨页人物</button>
-          <button class="chip" data-q="故障代码 E-203 的中文含义是什么？">跨语种翻译</button>
           <button class="chip" data-q="系统支持哪些接口？">系统能力</button>
+        </div>
+        <div class="eval-panel">
+          <h3>提测面板</h3>
+          <div class="eval-actions">
+            <button class="btn-ghost" id="runEvalBtn">运行评测</button>
+            <button class="btn-ghost" id="loadEvalBtn">最近报告</button>
+          </div>
+          <pre id="evalLog" class="eval-log">尚未运行评测</pre>
         </div>
       </aside>
       <div class="main-col">
@@ -439,8 +484,14 @@
     const sessionDump = $("sessionDump");
     const exportSessionBtn = $("exportSession");
     const clearSessionBtn = $("clearSession");
+    const runEvalBtn = $("runEvalBtn");
+    const loadEvalBtn = $("loadEvalBtn");
+    const evalLog = $("evalLog");
 
     const SESSION_KEY = "rag_chat_session_v1";
+    const CLIENT_SESSION_ID_KEY = "rag_chat_client_session_id_v1";
+    const clientSessionId = localStorage.getItem(CLIENT_SESSION_ID_KEY) || ("web-" + Math.random().toString(36).slice(2, 10));
+    localStorage.setItem(CLIENT_SESSION_ID_KEY, clientSessionId);
 
     const urlBaseFromQuery = new URLSearchParams(location.search).get("api");
     const defaultBase = location.protocol === "file:" ? "http://127.0.0.1:8000" : location.origin;
@@ -590,6 +641,42 @@
         dl.appendChild(dd);
       }
 
+      if (detail.trace) {
+        addRow("路由分支", detail.trace.route_branch || "");
+        addRow("是否回退", detail.trace.fallback_triggered ? "是" : "否");
+        addRow("重试原因", detail.trace.retry_reason || "none");
+        if (detail.trace.stages && detail.trace.stages.length) {
+          const dt = document.createElement("dt");
+          dt.textContent = "阶段耗时";
+          const dd = document.createElement("dd");
+          const tbl = document.createElement("table");
+          tbl.className = "trace-table";
+          const trh = document.createElement("tr");
+          ["stage", "elapsed_ms", "detail"].forEach((h) => {
+            const th = document.createElement("th");
+            th.textContent = h;
+            trh.appendChild(th);
+          });
+          tbl.appendChild(trh);
+          detail.trace.stages.forEach((st) => {
+            const tr = document.createElement("tr");
+            const td1 = document.createElement("td");
+            td1.textContent = st.stage || "";
+            const td2 = document.createElement("td");
+            td2.textContent = String(st.elapsed_ms ?? "");
+            const td3 = document.createElement("td");
+            td3.textContent = JSON.stringify(st.detail || {});
+            tr.appendChild(td1);
+            tr.appendChild(td2);
+            tr.appendChild(td3);
+            tbl.appendChild(tr);
+          });
+          dd.appendChild(tbl);
+          dl.appendChild(dt);
+          dl.appendChild(dd);
+        }
+      }
+
       body.appendChild(dl);
       det.appendChild(sum);
       det.appendChild(body);
@@ -645,7 +732,7 @@
         const r = await fetch(base + "/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, topk })
+          body: JSON.stringify({ query, topk, session_id: clientSessionId })
         });
         if (!r.ok) {
           const t = await r.text();
@@ -682,6 +769,35 @@
 
     sendBtn.addEventListener("click", ask);
     pingBtn.addEventListener("click", ping);
+    runEvalBtn.addEventListener("click", async () => {
+      const base = getBase();
+      evalLog.textContent = "评测运行中...";
+      try {
+        const r = await fetch(base + "/eval/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ persist: true, tag: "web-ui" })
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        evalLog.textContent = JSON.stringify(data, null, 2);
+        setStatus("评测完成并已落盘", "ok");
+      } catch (e) {
+        evalLog.textContent = "评测失败: " + e.message;
+        setStatus("评测失败: " + e.message, "err");
+      }
+    });
+    loadEvalBtn.addEventListener("click", async () => {
+      const base = getBase();
+      try {
+        const r = await fetch(base + "/eval/last", { method: "GET" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        evalLog.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        evalLog.textContent = "读取失败: " + e.message;
+      }
+    });
     exportSessionBtn.addEventListener("click", () => {
       const blob = new Blob([JSON.stringify(loadSession(), null, 2)], { type: "application/json" });
       const a = document.createElement("a");

@@ -1,53 +1,16 @@
-"""
-tools.py — L2 生成：四条分支工具（fact / multi_page / chart / translate）
-
-================================================================================
-【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
-================================================================================
-- 仅被 `pipeline.QAEngine._run_branch` 调用；输入已是「检索后的 Page 列表」。
-- 每条工具内部再调 `services` 里的 HTTP Client（VLM / Chart / Translation）或 `LLMClient`；失败则 `_fact_fallback_formatted` 等规则兜底（你导出 JSON 里看到的「简要结论」模板）。
-
-================================================================================
-【类比 Android】
-================================================================================
-- 像 **UseCase 包**：`FactQaUseCase`、`TranslateQaUseCase` 各自封装下游 RPC；`ThreadPoolExecutor` 类似 `ExecutorService` 并行翻译引擎。
-- `_doc_full_name`：从 `Page` 取展示文件名，类似从 `MediaItem` 取 `displayName`。
-
-================================================================================
-【从 Java/Kotlin 读 Python：本文件用到的语法】
-================================================================================
-- `dict.fromkeys(iterable)`：有序去重（Py3.7+ dict 保序），比手写 `LinkedHashSet` 模式短。
-- `Optional[LLMClient] = None`：默认不注入 LLM；Kotlin 默认参数 `llm: LLMClient? = null`。
-- `with ThreadPoolExecutor(...) as pool:`：上下文管理器，`with` 结束时自动 `shutdown`；类似 `use` / try-with-resources 模式封装线程池。
-- `lines: List[str] = []` 后 `lines.append`：可变列表累加字符串块，最后 `"\n".join(lines)`。
-
-四条分支工具实现（简化版）。
-
-设计目标：
-1) 与真实项目的工具形态一致
-2) 行为可解释，方便面试演示
-3) 注释足够详细，帮助你理解关键词
-
-你可以把 tools.py 当成“下游能力集合”：
-- 在真实系统里，这些可能是：
-  - 单图/多图 VLM 推理服务（HTTP/RPC）
-  - 图表解析服务（chart-parsing）
-  - 翻译服务（Google/DeepL/LLM）
-- 在这个 demo 里，我们用“结构化字段/规则/并行”来模拟这些能力的接口形态
-"""
+"""L2 生成工具：fact / multi_page / chart 三分支。"""
 
 from __future__ import annotations
 
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import SETTINGS
 from .llm_client import LLMClient
 from .models import Page
-from .services import ChartParsingClient, TranslationEngineClient, VLMClient
+from .services import ChartParsingClient, VLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -267,98 +230,3 @@ def chart_qa(query: str, pages: List[Page]) -> str:
     return prefix + f"{pick}（{merged[pick]}）"
 
 
-def _translate_google(src: str) -> str:
-    """模拟 Google 翻译输出。"""
-    return src.replace("Spindle temperature too high", "主轴温度过高").replace("please stop the machine", "请停机检修")
-
-
-def _translate_deepl(src: str) -> str:
-    """模拟 DeepL 翻译输出。"""
-    return src.replace("Spindle temperature too high", "主轴温度偏高").replace("please stop the machine", "请停止机器")
-
-
-def _translate_gpt4o(src: str) -> str:
-    """模拟 GPT-4o 翻译输出（术语更贴近业务）。"""
-    return src.replace("Spindle temperature too high", "主轴温度过高").replace("please stop the machine", "需立即停机检修")
-
-
-def _score_translation(text: str) -> float:
-    """
-    翻译质量打分（简化规则）。
-
-    面试可讲：真实工程中通常是“规则 + 模型”混合评分。
-    - 规则：领域术语命中、关键短语覆盖、长度惩罚等
-    - 模型：用 LLM/打分模型对候选翻译做质量评分
-    """
-    score = 0.0
-    if "主轴" in text:
-        score += 0.4
-    if "停机" in text:
-        score += 0.3
-    if "检修" in text:
-        score += 0.3
-    if "立即" in text or "需" in text:
-        score += 0.1
-    return score
-
-
-def translate_qa(query: str, page: Page, llm_client: Optional[LLMClient] = None) -> str:
-    """
-    翻译分支。
-
-    真实逻辑（与你简历一致）：
-    - OCR 抽取外文原文
-    - 并行调用多个翻译引擎
-    - scorer 选优
-    - 返回最佳译文
-    """
-    src = page.content
-    if SETTINGS.enable_llm_translation and llm_client and llm_client.enabled:
-        try:
-            translated = llm_client.chat_text(
-                system_prompt="你是工业手册翻译助手。保留故障码，输出自然、准确、术语一致的中文。",
-                user_prompt=f"问题：{query}\n原文：{src}\n请只输出中文答案。",
-            )
-            if translated:
-                return f"[engine=llm] {translated}"
-        except Exception:
-            pass
-
-    engines = {
-        "google": _translate_google,
-        "deepl": _translate_deepl,
-        "gpt4o": _translate_gpt4o,
-    }
-    external = TranslationEngineClient()
-    external_candidates: Dict[str, str] = {}
-    try:
-        google_result = external.google(src)
-        if google_result:
-            external_candidates["google"] = google_result
-    except Exception:
-        pass
-    try:
-        deepl_result = external.deepl(src)
-        if deepl_result:
-            external_candidates["deepl"] = deepl_result
-    except Exception:
-        pass
-    try:
-        oapi_result = external.oapi_chat(src)
-        if oapi_result:
-            external_candidates["oapi"] = oapi_result
-    except Exception:
-        pass
-
-    # 并行调用多个引擎（你可以把它当成：并行 RPC 调用多个下游服务）
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {name: pool.submit(fn, src) for name, fn in engines.items()}
-        candidates = {name: fut.result() for name, fut in futures.items()}
-    candidates.update(external_candidates)
-
-    # 选优：对每个候选翻译打分，选分数最高的
-    best_engine = max(candidates.keys(), key=lambda e: _score_translation(candidates[e]))
-
-    # 演示版暂不使用 query 做二次约束（真实系统可以用 query 引导评分，例如“要求输出中文含义/字段抽取”）
-    _ = query
-    return f"[engine={best_engine}] {candidates[best_engine]}"

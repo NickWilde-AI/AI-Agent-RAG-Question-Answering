@@ -5,7 +5,7 @@ router.py — L1 路由：把自然语言问题分到四条工具分支
 【在「简历第一条：检索 → 路由 → 生成 → 校验 → 重试」里的位置】
 ================================================================================
 - 在 `pipeline.QAEngine.ask` 里 **检索之后、调用 tools 之前** 调用 `route(query)`。
-- 输出 `branch`：`fact_qa` / `multi_page_qa` / `chart_qa` / `translate_qa`，与简历「四分支工具编排」一致。
+- 输出 `branch`：`fact_qa` / `multi_page_qa` / `chart_qa`。
 - 优先级：若配置允许且 LLM 可用 → `_route_with_llm`（含 OpenAI **function calling** 选工具名）；否则走**关键词规则**兜底，保证离线可复现。
 
 ================================================================================
@@ -37,18 +37,12 @@ from .llm_client import LLMClient
 
 
 class RouterAgent:
-    """
-    将 query 路由到四条分支：
-    - fact_qa：单页事实抽取
-    - multi_page_qa：跨页归纳推理
-    - chart_qa：图表数值/趋势问题
-    - translate_qa：跨语种翻译/抽取
-    """
+    """将 query 路由到三条分支：fact / multi_page / chart。"""
 
     BRANCH_FACT = "fact_qa"
     BRANCH_MULTI = "multi_page_qa"
     BRANCH_CHART = "chart_qa"
-    BRANCH_TRANSLATE = "translate_qa"
+    PRIMARY_BRANCHES = {BRANCH_FACT, BRANCH_MULTI, BRANCH_CHART}
     ROUTER_TOOLS = [
         {
             "type": "function",
@@ -74,14 +68,6 @@ class RouterAgent:
                 "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": BRANCH_TRANSLATE,
-                "description": "跨语种文档翻译、外文手册字段抽取或中英文含义解释。",
-                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-            },
-        },
     ]
 
     def __init__(self, llm_client: Optional[LLMClient] = None) -> None:
@@ -93,17 +79,17 @@ class RouterAgent:
         try:
             if SETTINGS.enable_function_calling_router:
                 result = self.llm_client.choose_tool(query=query, tools=self.ROUTER_TOOLS)
-                if result in {self.BRANCH_FACT, self.BRANCH_MULTI, self.BRANCH_CHART, self.BRANCH_TRANSLATE}:
+                if result in {self.BRANCH_FACT, self.BRANCH_MULTI, self.BRANCH_CHART}:
                     return result
             result = self.llm_client.chat_text(
                 system_prompt=(
                     "你是一个路由器。仅返回一个分支名："
-                    "fact_qa, multi_page_qa, chart_qa, translate_qa。"
+                    "fact_qa, multi_page_qa, chart_qa。"
                     "不要输出任何额外文本。"
                 ),
                 user_prompt=f"问题：{query}",
             ).strip()
-            if result in {self.BRANCH_FACT, self.BRANCH_MULTI, self.BRANCH_CHART, self.BRANCH_TRANSLATE}:
+            if result in {self.BRANCH_FACT, self.BRANCH_MULTI, self.BRANCH_CHART}:
                 return result
         except Exception:
             return None
@@ -115,14 +101,23 @@ class RouterAgent:
             return llm_branch
 
         q = query.lower()
-        # 翻译问题优先匹配
-        if any(x in q for x in ["翻译", "中文含义", "英文", "日文", "外文"]):
-            return self.BRANCH_TRANSLATE
-        # 图表问题
         if any(x in q for x in ["图表", "柱状", "折线", "趋势", "数值", "销售额", "kpi"]):
             return self.BRANCH_CHART
         # 跨页推理问题
         if any(x in q for x in ["谁负责", "谁介绍", "跨页", "多页", "汇报", "ppt"]):
             return self.BRANCH_MULTI
         # 默认事实抽取
+        return self.BRANCH_FACT
+
+    def fallback_branch(self, branch: str) -> str:
+        """
+        Verifier 失败时的保守回退：
+        - 图表题经常是检索噪声导致读错，先回退到事实抽取
+        - 多页题在证据不足时也回退到事实抽取
+        - 事实题可尝试多页聚合
+        """
+        if branch == self.BRANCH_CHART:
+            return self.BRANCH_FACT
+        if branch == self.BRANCH_MULTI:
+            return self.BRANCH_FACT
         return self.BRANCH_FACT

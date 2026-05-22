@@ -68,6 +68,25 @@ class RetrievalHit:
 
 
 @dataclass
+class StageTrace:
+    """单个阶段的执行轨迹。"""
+
+    stage: str
+    elapsed_ms: int
+    detail: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class AgentTrace:
+    """一次问答的全链路轨迹。"""
+
+    route_branch: str
+    fallback_triggered: bool
+    retry_reason: str
+    stages: List[StageTrace] = field(default_factory=list)
+
+
+@dataclass
 class QAResult:
     """
     一次问答的完整结果。
@@ -83,3 +102,4 @@ class QAResult:
     retry_hits: Optional[List[RetrievalHit]] = None
     tool_scores: Dict[str, float] = field(default_factory=dict)
     source_files: List[str] = field(default_factory=list)
+    trace: Optional[AgentTrace] = None

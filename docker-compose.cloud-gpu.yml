@@ -1,16 +1,28 @@
-# 云端「主 API + ColPali rerank」一键编排（需带 NVIDIA GPU 的机器 + nvidia-container-toolkit）。
+# 标准三容器：rag-api + colpali(GPU) + redis
 #
+# 要求：NVIDIA GPU + nvidia-container-toolkit
 # 准备：
-#   1. 宿主机存在 ./models/colpali-v1.3（可用 scripts/download_colpali_model.py 下载到该路径）
-#   2. 若使用自建索引：./data/user_pages.json 与 ./kb_pages/ 与索引里 image_path 一致（建议相对路径 kb_pages/...）
-#   3. cp .env.example .env 并填 OPENAI_*
+#   1. ./models/colpali-v1.3（scripts/download_colpali_model.py）
+#   2. 自建索引时挂载 data/user_pages.json 与 kb_pages/
+#   3. cp .env.example .env，填 OPENAI_*（或 vLLM 的 OPENAI_BASE_URL）
 #
 # 启动：
 #   docker compose -f docker-compose.cloud-gpu.yml up --build -d
 #
-# 仅 CPU 云机不要用这个文件（ColPali 推理会非常慢或 OOM）。
+# 访问：http://<IP>:8000/chat
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   colpali:
     build:
       context: .
@@ -29,6 +41,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    restart: unless-stopped
 
   rag-api:
     build: .
@@ -42,10 +55,15 @@ services:
       RAG_ENABLE_COLPALI_RERANK: "true"
       RAG_COLPALI_RERANK_API: http://colpali:9001/rerank
       RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+      RAG_SESSION_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      RAG_ENABLE_SESSION_CACHE: "true"
     volumes:
       - ./kb_pages:/app/kb_pages:ro
-      # 若存在自建索引，取消下一行注释（且保证 JSON 内 image_path 在容器内指向 /app/kb_pages/... 等可读路径）
       # - ./data/user_pages.json:/app/data/user_pages.json:ro
     depends_on:
-      - colpali
+      redis:
+        condition: service_healthy
+      colpali:
+        condition: service_started
     restart: unless-stopped

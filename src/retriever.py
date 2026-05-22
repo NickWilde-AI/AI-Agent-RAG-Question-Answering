@@ -256,7 +256,6 @@ class PageRetriever:
             "负责人": "负责人 owner owner",
             "销售额": "销售额 revenue",
             "故障代码": "故障代码 error_code",
-            "中文含义": "中文 含义 翻译",
         }
         rewritten = query
         for src, dst in replacements.items():
@@ -280,8 +279,6 @@ class PageRetriever:
             return "report"
         if any(x in q for x in ["介绍", "试点", "汇报", "ppt", "跨页"]):
             return "ppt"
-        if any(x in q for x in ["故障代码", "中文含义", "翻译", "英文", "外文"]):
-            return "manual"
         return None
 
     def retrieve(self, query: str, topk: int = SETTINGS.topk_default, doc_type: Optional[str] = None) -> Tuple[str, List[RetrievalHit]]:

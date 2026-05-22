@@ -16,7 +16,7 @@
 
 ## 项目简介
 
-本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（事实问答、跨页归纳、图表读数、翻译等），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**、**Prometheus 指标** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
+本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（事实问答、跨页归纳、图表读数），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**、**Prometheus 指标** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
 
 默认偏向 **轻量可跑**：避免大库启动时逐页远程 embedding 与本地 ColPali 占用过高资源；可按环境变量逐步打开企业级能力。
 
@@ -50,7 +50,7 @@
 |------|----------|
 | **检索** | Query 改写、类型预过滤、向量 + 词面混合打分；可选远程 embedding / Milvus、可选 ColPali 视觉 rerank |
 | **路由** | 规则优先，可选 LLM / Function Calling 分支选择 |
-| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa` / `translate_qa`，支持多页与 Excel 多 Sheet 证据合并 |
+| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并 |
 | **校验** | 规则可证性 + 可选 LLM / VLM 校验，失败可扩召回重试 |
 | **编排** | 可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
 | **服务化** | FastAPI：`/ask`、`/health`、`/metrics`；静态托管 `web/chat.html` |
@@ -150,7 +150,7 @@ docker compose -f docker-compose.cloud-gpu.yml up --build -d
 ## 配置说明
 
 - **数据加载逻辑**：若存在 `data/user_pages.json` 则优先加载，否则回退到随仓库提供的 `data/demo_pages.json`（见 `src/api.py`）。
-- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验/翻译、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度；详见 **`.env.example`** 与各 `src/*.py` 模块头注释。
+- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度；详见 **`.env.example`** 与各 `src/*.py` 模块头注释。
 
 ---
 
@@ -196,6 +196,13 @@ bash scripts/one_click_demo.sh
 |------|------|
 | `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy 评测 |
 | `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | 对 `/ask` 做冒烟请求（需服务已启动） |
+| `python scripts/stage3_test_gate.py --base http://127.0.0.1:8000` | 第三阶段提测门禁：校验 `/ask` trace、`/eval/run`、`/eval/last` |
+
+**提测相关接口**
+
+- `POST /eval/run`：触发离线评测并可选落盘到 `reports/eval/`
+- `GET /eval/last`：读取最近一次评测报告
+- `GET /metrics`：查看 Router/Verifier/阶段耗时等 Prometheus 指标
 
 **核心目录**（与上文「仓库目录结构」一致；此处为开发最常改路径）
 

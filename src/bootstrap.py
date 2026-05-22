@@ -47,15 +47,22 @@ def build_engine(data_path: str = "data/demo_pages.json") -> QAEngine:
     """
     llm_client = LLMClient.from_settings()
     retriever = PageRetriever.from_json(data_path, llm_client=llm_client)
+    mem_kw = {
+        "max_history": SETTINGS.session_max_history,
+        "cache_verified_only": SETTINGS.session_cache_require_verified,
+    }
     memory: SessionMemory
     if SETTINGS.session_backend == "redis":
         try:
-            memory = RedisSessionMemory(redis_url=SETTINGS.redis_url, ttl_seconds=SETTINGS.redis_ttl_seconds)
+            memory = RedisSessionMemory(
+                redis_url=SETTINGS.redis_url,
+                ttl_seconds=SETTINGS.redis_ttl_seconds,
+                **mem_kw,
+            )
         except Exception:
-            # 环境未准备好时自动回退，保证 demo 可运行。
-            memory = SessionMemory()
+            memory = SessionMemory(**mem_kw)
     else:
-        memory = SessionMemory()
+        memory = SessionMemory(**mem_kw)
 
     return QAEngine(
         retriever=retriever,
