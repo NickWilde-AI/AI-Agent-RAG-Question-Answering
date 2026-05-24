@@ -16,13 +16,48 @@
 
 ## 项目简介
 
-本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（事实问答、跨页归纳、图表读数），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**、**Prometheus 指标** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
+本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（**事实问答 / 跨页归纳 / 图表读数**），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**（含链路 trace 与提测面板）、**Prometheus 指标**、**离线评测 API** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
 
 默认偏向 **轻量可跑**：避免大库启动时逐页远程 embedding 与本地 ColPali 占用过高资源；可按环境变量逐步打开企业级能力。
 
-**应用入口**：`uvicorn offer_agent.api:app` — `offer_agent/api.py` 装载 `src.interfaces.api:app`。
+| 项 | 说明 |
+|----|------|
+| **应用入口** | `uvicorn offer_agent.api:app`（`offer_agent/api.py` → `src.interfaces.api:app`） |
+| **主文档** | 本 README；开关见 **`.env.example`**；实现细节见 **`src/`** 各模块头注释 |
+| **隐私资料** | 简历、面试笔记、宣讲 PDF 等请放 **`private/`**（默认不入库，见 `private/README.md`） |
 
-**文档约定**：对外说明以 **本 README** 为准；环境变量与开关见 **`.env.example`**；各模块设计说明见 **`src/`** 内源码注释（如 `pipeline.py`、`retriever.py`）。**个人简历、面试笔记、宣讲 PDF 等请放在 `private/` 目录**（该目录默认不入库，说明见 `private/README.md`）。
+---
+
+## 架构概览
+
+```mermaid
+flowchart LR
+  Q[用户问题] --> R[检索 + Query 改写]
+  R --> RT[Router<br/>fact / multi / chart]
+  RT --> T[工具链<br/>fact_qa / multi_page_qa / chart_qa]
+  T --> V[Verifier 可证性校验]
+  V -->|失败且开启 fallback| R
+  V --> A[答案 + citations + trace]
+```
+
+**单轮路径**：`src/pipeline.py` 内「先路由 → 再按分支 top-k 检索 → 工具 → 校验 → 可选扩召回 / 换分支重试」。  
+**多轮路径**：校验未通过且开启 `RAG_ENABLE_PLAN_EXECUTE_LOOP` 时，由 `PlanExecuteAgentLoop` 多轮扩 top-k 检索。
+
+---
+
+## 能力一览
+
+| 模块 | 能力说明 |
+|------|----------|
+| **检索** | Query 改写、类型预过滤、向量 + 词面混合打分；可选远程 embedding / Milvus、可选 ColPali 视觉 rerank |
+| **路由** | 三分支：`fact` / `multi` / `chart`；规则优先，可选 LLM / Function Calling |
+| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并 |
+| **校验** | 规则可证性 + 可选 LLM / VLM 校验；失败可扩 top-k 或分支 fallback 重试 |
+| **编排** | 可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
+| **可观测** | `/ask` 返回 `trace`（各阶段耗时与分支）；`/metrics` 暴露 Router / Verifier / 缓存等指标 |
+| **评测** | `POST /eval/run` 离线跑样本集；`GET /eval/last` 读最近报告；报告落盘 `reports/eval/`（已 gitignore） |
+| **服务化** | FastAPI：`/ask`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
+| **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
 
 ---
 
@@ -30,39 +65,38 @@
 
 ```text
 .
-├── README.md                 # 对外说明（主文档）
-├── .env.example              # 环境变量与 RAG_* 开关说明
-├── main.py                   # 离线演示与评测入口
-├── offer_agent/              # Uvicorn 包入口（api:app）
-├── src/                      # 核心业务：config、retriever、router、tools、pipeline、api、infra…
-├── scripts/                  # one_click_demo、建库、ColPali 服务、冒烟测试等
-├── web/                      # 聊天前端 chat.html
-├── data/                     # demo_pages.json（随仓库）；user_pages.json 等由建库生成（见 .gitignore）
-├── private/                  # 本地隐私区：简历 / 面试 / PDF（仅 private/README.md 可纳入版本库）
-├── docker-compose*.yml       # 本地或 GPU 云编排
-├── Dockerfile*               # 镜像构建
-└── requirements*.txt       # Python 依赖
+├── README.md                      # 对外说明（主文档）
+├── .env.example                   # 环境变量与 RAG_* 开关
+├── main.py                        # 离线演示与评测入口
+├── offer_agent/                   # Uvicorn 包入口（api:app）
+├── src/                           # 核心业务
+│   ├── pipeline.py                # 主链路编排
+│   ├── router.py                  # 三分支路由
+│   ├── retriever.py               # 混合检索
+│   ├── tools.py                   # fact / multi / chart 工具
+│   ├── api.py                     # HTTP 与 Prometheus
+│   ├── eval_suite.py              # 离线评测
+│   └── infra/                     # Redis 会话、评测报告存储等
+├── scripts/
+│   ├── one_click_demo.sh          # 一键安装依赖并启动 API（推荐）
+│   ├── build_index_incremental.py # 增量建库
+│   └── stage3_test_gate.py        # 提测门禁（health / ask+trace / eval）
+├── web/chat.html                  # 聊天前端（trace + 提测面板）
+├── data/demo_pages.json           # 演示索引（随仓库）
+├── private/                       # 本地隐私区（仅 README 可入库）
+├── docker-compose*.yml            # 本地或 GPU 云编排
+└── requirements*.txt              # Python 依赖
 ```
 
----
-
-| 模块 | 能力说明 |
-|------|----------|
-| **检索** | Query 改写、类型预过滤、向量 + 词面混合打分；可选远程 embedding / Milvus、可选 ColPali 视觉 rerank |
-| **路由** | 规则优先，可选 LLM / Function Calling 分支选择 |
-| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并 |
-| **校验** | 规则可证性 + 可选 LLM / VLM 校验，失败可扩召回重试 |
-| **编排** | 可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
-| **服务化** | FastAPI：`/ask`、`/health`、`/metrics`；静态托管 `web/chat.html` |
-| **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
+> `user_docs/`、`kb_pages/`、`data/user_pages.json`、`reports/eval/` 等由 **`.gitignore`** 排除，请勿将敏感语料提交远程。
 
 ---
 
 ## 快速开始
 
-> **约定**：以下命令均在 **仓库根目录** 执行。
+> 以下命令均在 **仓库根目录** 执行。
 
-### 1. 获取代码与虚拟环境
+### 1. 获取代码
 
 ```bash
 git clone https://github.com/NickWilde-AI/AI-Agent-RAG-Question-Answering.git
@@ -75,17 +109,17 @@ cd AI-Agent-RAG-Question-Answering
 cp .env.example .env
 ```
 
-编辑 `.env`，至少配置与 **OpenAI 兼容** 的对话接口（用于生成式回答与部分分支）：
+编辑 `.env`，至少配置 **OpenAI 兼容** 对话接口：
 
 | 变量 | 说明 |
 |------|------|
 | `OPENAI_API_KEY` | API 密钥 |
-| `OPENAI_BASE_URL` | 网关地址，例如 `https://api.openai.com/v1` 或兼容中转 |
+| `OPENAI_BASE_URL` | 网关地址，如 `https://api.openai.com/v1` 或兼容中转 |
 | `OPENAI_CHAT_MODEL` | 对话模型名 |
 
 其余 `RAG_*` 开关见 `.env.example` 注释；默认多为轻量关闭，可按需开启。
 
-### 3. 启动方式
+### 3. 启动
 
 **一键演示（推荐首次）** — 安装依赖、可选增量建库、后台启动 API：
 
@@ -93,8 +127,10 @@ cp .env.example .env
 bash scripts/one_click_demo.sh
 ```
 
-- 默认 `RAG_LITE_MODE=1`：不拉 ColPali 依赖、不启 Docker Redis、不启 ColPali 进程，并在进程环境中关闭重型 embedding / rerank / Loop，避免单机资源占满。
-- 全量链路（ColPali + Redis 等）：`RAG_LITE_MODE=0 bash scripts/one_click_demo.sh`
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| 轻量（默认） | `bash scripts/one_click_demo.sh` | `RAG_LITE_MODE=1`：不拉 ColPali、不启 Docker Redis，关闭重型 embedding / rerank / Loop |
+| 全量链路 | `RAG_LITE_MODE=0 bash scripts/one_click_demo.sh` | ColPali + Redis 等（需本机或 GPU 云资源） |
 
 **本地开发（热重载）**：
 
@@ -102,23 +138,24 @@ bash scripts/one_click_demo.sh
 ./run_offer.sh
 ```
 
-等价于：创建或使用 `.venv`、安装 `requirements.txt`、加载 `.env` 后执行  
+等价于：`.venv` + `requirements.txt` + 加载 `.env` 后  
 `uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 --reload`。
 
 ### 4. 访问
 
 | 路径 | 用途 |
 |------|------|
-| [http://127.0.0.1:8000/chat](http://127.0.0.1:8000/chat) | 内置聊天前端 |
+| [http://127.0.0.1:8000/chat](http://127.0.0.1:8000/chat) | 内置聊天前端（展示 trace、触发评测） |
 | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | OpenAPI / Swagger |
 | [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) | 健康检查 |
+| [http://127.0.0.1:8000/capabilities](http://127.0.0.1:8000/capabilities) | 当前实例已开启能力列表 |
 | [http://127.0.0.1:8000/metrics](http://127.0.0.1:8000/metrics) | Prometheus 文本指标 |
 
 服务日志（一键脚本）：`logs/api.log`。
 
 ### 5. Docker / 云主机
 
-#### 5.1 仅 API（本机或低配云机，**不含 ColPali**）
+#### 5.1 仅 API（低配可跑，不含 ColPali）
 
 `Dockerfile` + `docker-compose.yml`：内置 `data/demo_pages.json`，镜像内关闭远程 embedding / ColPali / Plan Loop。
 
@@ -129,28 +166,34 @@ docker compose up --build
 
 安全组放行 **8000**。
 
-#### 5.2 云端 GPU 跑 ColPali + API（本机跑不动 ColPali 时用）
+#### 5.2 云端 GPU（ColPali + API 分容器）
 
-思路：**ColPali 单独一个容器吃 GPU**，主 API 另一个容器，通过 `http://colpali:9001/rerank` 调用 —— 与你在本机起 `9001` + `8000` 一样，只是换成云上两台「逻辑服务」、一键编排。
+ColPali 单独容器占 GPU，主 API 经 `http://colpali:9001/rerank` 调用。
 
 ```bash
-# 1) 在服务器上准备权重目录（可用 scripts/download_colpali_model.py 下载到 models/colpali-v1.3）
-# 2) 若有自建索引：准备 kb_pages/ 与 data/user_pages.json（索引里 image_path 建议为 kb_pages/...，两容器均挂载到 /app/kb_pages）
-# 3) 云主机需：NVIDIA 驱动 + nvidia-container-toolkit，Docker 支持 GPU
+# 权重：scripts/download_colpali_model.py → models/colpali-v1.3
+# 自建索引：kb_pages/ + data/user_pages.json（image_path 建议 kb_pages/...）
+# 需 NVIDIA 驱动 + nvidia-container-toolkit
 cp .env.example .env
-
 docker compose -f docker-compose.cloud-gpu.yml up --build -d
 ```
 
-- 详见仓库根目录 **`docker-compose.cloud-gpu.yml`** 内注释（含 `user_pages.json` 可选挂载）。  
-- **无 GPU 的 CPU 云机不要强上 ColPali**，推理极慢且易 OOM；此时用 **5.1** 即可。
+无 GPU 的 CPU 云机请勿强上 ColPali，用 **5.1** 即可。详见 `docker-compose.cloud-gpu.yml` 内注释。
 
 ---
 
 ## 配置说明
 
-- **数据加载逻辑**：若存在 `data/user_pages.json` 则优先加载，否则回退到随仓库提供的 `data/demo_pages.json`（见 `src/api.py`）。
-- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验、Plan–Execute 循环等均可通过环境变量独立开关，便于对照实验与线上灰度；详见 **`.env.example`** 与各 `src/*.py` 模块头注释。
+- **数据加载**：存在 `data/user_pages.json` 时优先加载，否则回退 `data/demo_pages.json`（见 `src/api.py`）。
+- **能力灰度**：真实 embedding、多模态 embedding、ColPali rerank、LLM 路由/校验、Plan–Execute 循环、分支 fallback 等均可通过 `RAG_*` 独立开关，便于对照实验与灰度发布。
+
+**分支 top-k（示例，见 `.env.example`）**
+
+| 分支 | 环境变量 | 默认 |
+|------|----------|------|
+| 事实 | `RAG_TOPK_FACT` | 3 |
+| 跨页 | `RAG_TOPK_MULTI_PAGE` | 5 |
+| 图表 | `RAG_TOPK_CHART` | 4 |
 
 ---
 
@@ -168,21 +211,21 @@ python scripts/build_index_incremental.py \
   --lang zh
 ```
 
-重启 API 后即可检索新索引。`user_docs/`、`kb_pages/`、`data/user_pages.json` 等默认由 **`.gitignore`** 排除，请勿将敏感资料提交至远程仓库。
+重启 API 后即可检索新索引。
 
-**文档清单（按类型分列文件名）**：扫描目录并写入文本文件，便于核对入库资料：
+**文档清单**（按类型列出文件名，便于核对入库资料）：
 
 ```bash
 python scripts/list_user_docs_catalog.py --input-dir user_docs --output data/user_docs_catalog.txt
 ```
 
-**清空旧索引并全量重建**（原始文档仍在 `user_docs/`）：
+**清空旧索引并全量重建**（`user_docs/` 内原文档保留）：
 
 ```bash
 RAG_FORCE_REBUILD_KB=1 bash scripts/one_click_demo.sh
 ```
 
-日常启动与增量建库（含从 `user_docs/` 删除的文件自动清理）只需：
+日常增量建库（含删除文件自动清理）：
 
 ```bash
 bash scripts/one_click_demo.sh
@@ -190,39 +233,40 @@ bash scripts/one_click_demo.sh
 
 ---
 
-## 开发与 HTTP 接口
+## HTTP 接口与提测
+
+### 核心接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/ask` | 问答；响应含 `answer`、`citations`、**`trace`**（路由分支、各阶段耗时等） |
+| `GET` | `/health` | 健康检查 |
+| `GET` | `/capabilities` | 当前启用的 RAG / 路由 / 校验能力 |
+| `GET` | `/metrics` | Prometheus 指标（Router、Verifier、缓存、阶段延迟等） |
+| `POST` | `/eval/run` | 触发离线评测，可选落盘 `reports/eval/` |
+| `GET` | `/eval/last` | 读取最近一次评测报告 JSON |
+
+### 本地命令
 
 | 命令 | 说明 |
 |------|------|
-| `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy 评测 |
-| `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | 对 `/ask` 做冒烟请求（需服务已启动） |
-| `python scripts/stage3_test_gate.py --base http://127.0.0.1:8000` | 第三阶段提测门禁：校验 `/ask` trace、`/eval/run`、`/eval/last` |
+| `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy |
+| `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | `/ask` 冒烟（需服务已启动） |
+| `python scripts/stage3_test_gate.py --base http://127.0.0.1:8000` | **提测门禁**：`/health`、`/ask`+trace、`/eval/run`、`/eval/last` |
 
-**提测相关接口**
+提测示例（先 `bash scripts/one_click_demo.sh`）：
 
-- `POST /eval/run`：触发离线评测并可选落盘到 `reports/eval/`
-- `GET /eval/last`：读取最近一次评测报告
-- `GET /metrics`：查看 Router/Verifier/阶段耗时等 Prometheus 指标
-
-**核心目录**（与上文「仓库目录结构」一致；此处为开发最常改路径）
-
-```text
-.
-├── offer_agent/          # Uvicorn 包入口（api:app）
-├── src/                  # 配置、检索、路由、工具、Pipeline、FastAPI 应用
-├── scripts/              # 一键脚本、建库、ColPali 服务、冒烟测试
-├── web/chat.html         # 聊天前端
-├── data/demo_pages.json  # 演示用页面索引（随仓库）
-├── private/              # 本地隐私资料（不入库，见 private/README.md）
-└── main.py                 # 命令行演示与评测入口
+```bash
+python scripts/stage3_test_gate.py --base http://127.0.0.1:8000
 ```
 
 ---
 
 ## 安全与合规
 
-- **切勿**将 `.env`、内含密钥的配置或私有文档推送到公开仓库。
-- 生产环境请配合最小权限密钥、网络隔离与审计日志；本仓库示例以 **演示与研发** 为主。
+- **切勿**将 `.env`、密钥、私有文档或大体积模型推送到公开仓库。
+- **`private/`**、**`private.zip`**、本地实验目录 **`pythonProject1/`** 已在 `.gitignore` 中排除。
+- 生产环境请配合最小权限密钥、网络隔离与审计日志；本仓库以 **演示与研发** 为主。
 
 ---
 
@@ -231,14 +275,18 @@ bash scripts/one_click_demo.sh
 Issue 与 Pull Request 均欢迎。提交前请确认：
 
 1. 未包含密钥、大体积模型或私有语料；
-2. 变更与现有 `RAG_*` 开关行为一致或可文档化说明。
+2. 变更与现有 `RAG_*` 开关行为一致，或已在 README / `.env.example` 中说明。
 
 ---
 
 ## 相关文档
 
-- **`.env.example`**：全部 `RAG_*` 与外部服务 URL 说明。  
-- **`src/pipeline.py`、`src/retriever.py`、`src/api.py`**：主链路、检索与 HTTP 入口（文件头含架构说明）。
+| 资源 | 内容 |
+|------|------|
+| `.env.example` | 全部 `RAG_*` 与外部服务 URL |
+| `src/pipeline.py` | 主链路编排与 fallback |
+| `src/retriever.py` | 混合检索与 rerank |
+| `src/api.py` | HTTP 入口与指标注册 |
 
 ---
 
