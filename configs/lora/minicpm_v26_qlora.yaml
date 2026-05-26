@@ -1,0 +1,34 @@
+model_name_or_path: openbmb/MiniCPM-V-2_6
+dataset_path: data/lora/train.jsonl
+val_dataset_path: data/lora/val.jsonl
+output_dir: artifacts/lora/minicpm-v26-domain-v1
+
+max_seq_length: 2048
+num_train_epochs: 2
+learning_rate: 0.0002
+warmup_ratio: 0.03
+weight_decay: 0.01
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+logging_steps: 10
+save_steps: 200
+eval_steps: 200
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16

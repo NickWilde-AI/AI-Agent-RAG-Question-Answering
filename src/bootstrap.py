@@ -26,9 +26,12 @@ bootstrap.py — 依赖组装（Dependency Injection / 工厂方法）
 
 from __future__ import annotations
 
+from typing import Any
+
 from .agent_loop import PlanExecuteAgentLoop
 from .config import SETTINGS
 from .infra.redis_memory import RedisSessionMemory
+from .langgraph_engine import LangGraphQAEngine
 from .llm_client import LLMClient
 from .memory import SessionMemory
 from .pipeline import QAEngine
@@ -37,7 +40,7 @@ from .router import RouterAgent
 from .verifier import Verifier
 
 
-def build_engine(data_path: str = "data/demo_pages.json") -> QAEngine:
+def build_engine(data_path: str = "data/demo_pages.json") -> Any:
     """
     构建 QAEngine。
 
@@ -64,11 +67,20 @@ def build_engine(data_path: str = "data/demo_pages.json") -> QAEngine:
     else:
         memory = SessionMemory(**mem_kw)
 
+    router = RouterAgent(llm_client=llm_client)
+    verifier = Verifier(llm_client=llm_client)
+    if SETTINGS.enable_langgraph:
+        return LangGraphQAEngine(
+            retriever=retriever,
+            router=router,
+            memory=memory,
+            verifier=verifier,
+        )
     return QAEngine(
         retriever=retriever,
-        router=RouterAgent(llm_client=llm_client),
+        router=router,
         memory=memory,
-        verifier=Verifier(llm_client=llm_client),
+        verifier=verifier,
     )
 
 

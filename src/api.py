@@ -39,9 +39,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.responses import FileResponse, Response
+import sentry_sdk
 
 from .bootstrap import build_agent_loop, build_engine
 from .config import SETTINGS
+from .middleware_ops import RateLimitMiddleware, RequestTimingMiddleware
+from .router import router_circuit_open
+from .services import vlm_circuit_open
 from .eval_suite import DEFAULT_EVAL_SAMPLES, run_eval_report
 from .infra.eval_report_store import load_latest_eval_report, save_eval_report
 
@@ -55,8 +59,15 @@ CACHE_HIT_COUNT = Counter("rag_cache_hit_total", "Session cache hit totals")
 RETRY_REASON_COUNT = Counter("rag_retry_reason_total", "Retry reason totals", ["reason"])
 STAGE_LATENCY = Histogram("rag_stage_latency_seconds", "Per stage latency", ["stage"])
 EVAL_RUN_COUNT = Counter("rag_eval_run_total", "Offline eval run totals")
-
 app = FastAPI(title="Visual RAG Agent API", version="0.1.0")
+app.add_middleware(RequestTimingMiddleware)
+app.add_middleware(RateLimitMiddleware)
+if SETTINGS.sentry_dsn:
+    sentry_sdk.init(
+        dsn=SETTINGS.sentry_dsn,
+        traces_sample_rate=0.05,
+        environment="prod" if not SETTINGS.enable_plan_execute_loop else "staging",
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -133,8 +144,15 @@ def capabilities() -> Dict[str, Any]:
         "milvus": SETTINGS.vector_backend == "milvus",
         "colpali_rerank": bool(SETTINGS.enable_colpali_rerank and SETTINGS.colpali_rerank_api),
         "function_calling_router": bool(SETTINGS.enable_function_calling_router and SETTINGS.openai_api_key),
+        "langgraph": SETTINGS.enable_langgraph,
         "vlm": bool(SETTINGS.vlm_api),
         "chart_parsing": bool(SETTINGS.chart_parsing_api),
+        "bm25_fallback": SETTINGS.enable_bm25_fallback,
+        "rate_limit": SETTINGS.enable_rate_limit,
+        "router_circuit_breaker": SETTINGS.enable_router_circuit_breaker,
+        "router_circuit_open": router_circuit_open(),
+        "vlm_circuit_breaker": SETTINGS.enable_vlm_circuit_breaker,
+        "vlm_circuit_open": vlm_circuit_open(),
         "local_colpali_model": Path(SETTINGS.colpali_model_dir).exists(),
         "local_colpali_model_dir": SETTINGS.colpali_model_dir,
         "redis_memory": SETTINGS.session_backend == "redis",
@@ -209,24 +227,33 @@ def ask(req: AskRequest) -> AskResponse:
     start = time.perf_counter()
     loop_steps: Optional[List[Dict[str, Any]]] = None
     sid = req.session_id
-    if SETTINGS.enable_plan_execute_loop:
-        loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid)
-        result = loop_run.result
-        loop_steps = [
-            {
-                "step_no": s.step_no,
-                "plan": s.plan,
-                "branch": s.branch,
-                "verified": s.verified,
-                "hit_count": s.hit_count,
-            }
-            for s in loop_run.steps
-        ]
-    else:
-        if req.topk:
-            result = engine.ask(req.query, topk=req.topk, session_id=sid)
+    try:
+        if SETTINGS.enable_plan_execute_loop:
+            loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid)
+            result = loop_run.result
+            loop_steps = [
+                {
+                    "step_no": s.step_no,
+                    "plan": s.plan,
+                    "branch": s.branch,
+                    "verified": s.verified,
+                    "hit_count": s.hit_count,
+                }
+                for s in loop_run.steps
+            ]
         else:
-            result = engine.ask(req.query, session_id=sid)
+            if req.topk:
+                result = engine.ask(req.query, topk=req.topk, session_id=sid)
+            else:
+                result = engine.ask(req.query, session_id=sid)
+    except Exception as exc:
+        if SETTINGS.sentry_dsn:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("component", "api")
+                scope.set_tag("endpoint", "/ask")
+                scope.set_tag("session_id", sid)
+                sentry_sdk.capture_exception(exc)
+        raise
     elapsed_ms = int((time.perf_counter() - start) * 1000)
 
     if result.retry_hits:

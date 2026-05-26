@@ -1,0 +1,29 @@
+http:
+  routers:
+    rag-gray:
+      rule: PathPrefix(`/`)
+      entryPoints:
+      - web
+      service: rag-weighted
+  services:
+    rag-weighted:
+      weighted:
+        services:
+        - name: rag-stable
+          weight: 90
+        - name: rag-canary
+          weight: 5
+        - name: rag-shadow
+          weight: 5
+    rag-stable:
+      loadBalancer:
+        servers:
+        - url: http://rag-api-stable:8000
+    rag-canary:
+      loadBalancer:
+        servers:
+        - url: http://rag-api-canary:8000
+    rag-shadow:
+      loadBalancer:
+        servers:
+        - url: http://rag-api-canary:8000

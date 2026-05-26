@@ -34,6 +34,8 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
+import sentry_sdk
+
 from .config import SETTINGS
 from .llm_client import LLMClient
 from .models import Page
@@ -88,7 +90,12 @@ class Verifier:
                 return True
             if result.startswith("NO"):
                 return False
-        except Exception:
+        except Exception as exc:
+            if SETTINGS.sentry_dsn:
+                with sentry_sdk.push_scope() as scope:
+                    scope.set_tag("component", "verifier")
+                    scope.set_tag("phase", "llm_verify")
+                    sentry_sdk.capture_exception(exc)
             return None
         return None
 
@@ -104,7 +111,12 @@ class Verifier:
                 judgement = vlm.verify(query="", answer=answer, image_paths=image_paths[:5])
                 if judgement is not None:
                     return judgement
-            except Exception:
+            except Exception as exc:
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "verifier")
+                        scope.set_tag("phase", "vlm_verify")
+                        sentry_sdk.capture_exception(exc)
                 pass
 
         llm_judgement = self._verify_with_llm(answer, pages)

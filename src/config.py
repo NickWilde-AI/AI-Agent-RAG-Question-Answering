@@ -77,9 +77,13 @@ class Settings:
     enable_colpali_rerank: bool = _get_bool("RAG_ENABLE_COLPALI_RERANK", False)
     enable_function_calling_router: bool = _get_bool("RAG_ENABLE_FUNCTION_CALLING_ROUTER", True)
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    oapi_api_key: str = os.getenv("OAPI_API_KEY", "")
     openai_base_url: str = _normalize_openai_base_url(os.getenv("OPENAI_BASE_URL", ""))
     openai_chat_model: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    llm_max_retries: int = int(os.getenv("RAG_LLM_MAX_RETRIES", "2"))
+    llm_retry_base_seconds: float = float(os.getenv("RAG_LLM_RETRY_BASE_SECONDS", "0.6"))
+    llm_retry_max_seconds: float = float(os.getenv("RAG_LLM_RETRY_MAX_SECONDS", "4.0"))
     multimodal_embedding_api: str = os.getenv("RAG_MULTIMODAL_EMBEDDING_API", "")
     colpali_rerank_api: str = os.getenv("RAG_COLPALI_RERANK_API", "")
     colpali_rerank_timeout_seconds: float = float(os.getenv("RAG_COLPALI_RERANK_TIMEOUT_SECONDS", "12"))
@@ -91,6 +95,8 @@ class Settings:
     colpali_model_dir: str = os.getenv("COLPALI_MODEL_DIR", "models/colpali-v1.3")
     # ReAct 思路开关：启用后会走 plan-execute-verify-retry loop（默认关，减轻延迟与负载）
     enable_plan_execute_loop: bool = _get_bool("RAG_ENABLE_PLAN_EXECUTE_LOOP", False)
+    # 启用 LangGraph 主链路编排（默认关闭，保持原有自研状态机行为）
+    enable_langgraph: bool = _get_bool("RAG_ENABLE_LANGGRAPH", False)
     # 向量库后端：inmemory / milvus
     vector_backend: str = os.getenv("RAG_VECTOR_BACKEND", "inmemory")
     milvus_uri: str = os.getenv("MILVUS_URI", "http://localhost:19530")
@@ -106,6 +112,24 @@ class Settings:
     benchmark_recall_at_10: float = float(os.getenv("RAG_BENCHMARK_RECALL_AT_10", "0.894"))
     benchmark_accuracy: float = float(os.getenv("RAG_BENCHMARK_ACCURACY", "0.587"))
     benchmark_router_accuracy: float = float(os.getenv("RAG_BENCHMARK_ROUTER_ACCURACY", "0.92"))
+    # 降级检索：外部 embedding 不可用时可切到 BM25 词面召回
+    enable_bm25_fallback: bool = _get_bool("RAG_ENABLE_BM25_FALLBACK", True)
+    bm25_k1: float = float(os.getenv("RAG_BM25_K1", "1.2"))
+    bm25_b: float = float(os.getenv("RAG_BM25_B", "0.75"))
+    # 可观测/告警
+    sentry_dsn: str = os.getenv("SENTRY_DSN", "")
+    # HTTP 限流（/ask）
+    enable_rate_limit: bool = _get_bool("RAG_ENABLE_RATE_LIMIT", True)
+    rate_limit_rps: float = float(os.getenv("RAG_RATE_LIMIT_RPS", "5"))
+    rate_limit_burst: float = float(os.getenv("RAG_RATE_LIMIT_BURST", "10"))
+    # Router LLM 熔断（失败后走规则路由）
+    enable_router_circuit_breaker: bool = _get_bool("RAG_ENABLE_ROUTER_CIRCUIT_BREAKER", True)
+    router_cb_failures: int = int(os.getenv("RAG_ROUTER_CB_FAILURES", "5"))
+    router_cb_recovery_seconds: float = float(os.getenv("RAG_ROUTER_CB_RECOVERY_SECONDS", "30"))
+    # VLM 熔断（连续失败后短时间禁用 VLM，降级到文本链路）
+    enable_vlm_circuit_breaker: bool = _get_bool("RAG_ENABLE_VLM_CIRCUIT_BREAKER", True)
+    vlm_cb_failures: int = int(os.getenv("RAG_VLM_CB_FAILURES", "3"))
+    vlm_cb_recovery_seconds: float = float(os.getenv("RAG_VLM_CB_RECOVERY_SECONDS", "30"))
 
 
 SETTINGS = Settings()

@@ -1,0 +1,113 @@
+# vLLM + MiniCPM-V + RAG API 一键部署（GPU）
+#
+# 启动：
+#   cp .env.example .env
+#   docker compose -f docker-compose.vllm.yml up --build -d
+#
+# 访问：
+#   http://<IP>:8000/chat
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    command:
+      - --model
+      - ${VLM_MODEL:-openbmb/MiniCPM-V-2_6}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --max-model-len
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.9"
+    ports:
+      - "8001:8001"
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/v1/models', timeout=5).read()",
+        ]
+      interval: 20s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+
+  vlm-gateway:
+    build: .
+    command: python -m uvicorn scripts.vlm_gateway:app --host 0.0.0.0 --port 9010
+    environment:
+      VLM_OPENAI_BASE_URL: http://vllm:8001/v1
+      VLM_OPENAI_API_KEY: ${VLM_OPENAI_API_KEY:-EMPTY}
+      VLM_MODEL: ${VLM_MODEL:-openbmb/MiniCPM-V-2_6}
+    volumes:
+      - ./kb_pages:/app/kb_pages:ro
+    depends_on:
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9010/health', timeout=5).read()",
+        ]
+      interval: 20s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      RAG_VLM_API: http://vlm-gateway:9010/answer
+      RAG_CHART_PARSING_API: ""
+      RAG_SESSION_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      RAG_ENABLE_SESSION_CACHE: "true"
+      RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+    volumes:
+      - ./kb_pages:/app/kb_pages:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      vlm-gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 20s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped

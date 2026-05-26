@@ -40,13 +40,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from prometheus_client import Counter as PromCounter
+import sentry_sdk
 
 from .config import SETTINGS
+
+BM25_FALLBACK_COUNT = PromCounter(
+    "rag_bm25_fallback_total",
+    "Retrieval used BM25 fallback scoring",
+)
 from .infra.vector_store import BaseVectorStore, InMemoryVectorStore, MilvusVectorStore
 from .llm_client import LLMClient
 from .models import Page, RetrievalHit
@@ -154,6 +163,11 @@ class PageRetriever:
         self.vector_store = vector_store or self._build_vector_store()
         self.page_vectors: Dict[str, np.ndarray] = {}
         self.id_to_page: Dict[str, Page] = {p.page_id: p for p in pages}
+        self._external_embed_failed = False
+        self._page_token_counters: Dict[str, Counter] = {}
+        self._doc_freq: Dict[str, int] = defaultdict(int)
+        self._avg_doc_len = 1.0
+        self._build_bm25_stats()
         self._build_index()
 
     @staticmethod
@@ -173,24 +187,40 @@ class PageRetriever:
                     collection=SETTINGS.milvus_collection,
                     dim=self.vector_dim,
                 )
-            except Exception:
+            except Exception as exc:
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "retriever")
+                        scope.set_tag("phase", "milvus_init")
+                        sentry_sdk.capture_exception(exc)
                 return InMemoryVectorStore()
         return InMemoryVectorStore()
 
     def _embed_text(self, text: str) -> np.ndarray:
         """优先走真实 embedding，失败时自动降级哈希 embedding。"""
+        self._external_embed_failed = False
         if self.multimodal_client.enabled:
             try:
                 return _normalize(np.array(self.multimodal_client.embed_text(text), dtype=np.float32))
-            except Exception:
-                pass
+            except Exception as exc:
+                self._external_embed_failed = True
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "retriever")
+                        scope.set_tag("phase", "embed_text_multimodal")
+                        sentry_sdk.capture_exception(exc)
         if SETTINGS.enable_real_embedding and self.llm_client and self.llm_client.enabled:
             try:
                 vec = np.array(self.llm_client.embed(text), dtype=np.float32)
                 return _normalize(vec)
-            except Exception:
+            except Exception as exc:
+                self._external_embed_failed = True
                 # 线上可在此接入日志与告警；demo 里保持静默降级可运行。
-                pass
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "retriever")
+                        scope.set_tag("phase", "embed_text_llm")
+                        sentry_sdk.capture_exception(exc)
         return _hash_to_vector(text, self.vector_dim)
 
     def _embed_page(self, page: Page) -> np.ndarray:
@@ -205,10 +235,49 @@ class PageRetriever:
                     dtype=np.float32,
                 )
                 return _normalize(vec)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._external_embed_failed = True
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "retriever")
+                        scope.set_tag("phase", "embed_page_image")
+                        sentry_sdk.capture_exception(exc)
         text_for_embed = f"{page.doc_type} {page.language} {page.content}"
         return self._embed_text(text_for_embed)
+
+    def _build_bm25_stats(self) -> None:
+        if not self.pages:
+            return
+        total_len = 0
+        for page in self.pages:
+            tokens = _tokenize((page.content or "") + " " + " ".join((page.fields or {}).keys()))
+            if not tokens:
+                tokens = ["_empty_"]
+            counter = Counter(tokens)
+            self._page_token_counters[page.page_id] = counter
+            total_len += sum(counter.values())
+            for t in counter.keys():
+                self._doc_freq[t] += 1
+        self._avg_doc_len = max(total_len / len(self.pages), 1.0)
+
+    def _bm25_score_page(self, query_tokens: List[str], page_id: str) -> float:
+        counter = self._page_token_counters.get(page_id)
+        if not counter:
+            return 0.0
+        dl = sum(counter.values()) or 1
+        n_docs = max(len(self.pages), 1)
+        k1 = SETTINGS.bm25_k1
+        b = SETTINGS.bm25_b
+        score = 0.0
+        for t in query_tokens:
+            tf = counter.get(t, 0)
+            if tf <= 0:
+                continue
+            df = self._doc_freq.get(t, 0)
+            idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
+            denom = tf + k1 * (1 - b + b * dl / self._avg_doc_len)
+            score += idf * (tf * (k1 + 1) / max(denom, 1e-6))
+        return float(score)
 
     def _build_index(self) -> None:
         """
@@ -306,6 +375,10 @@ class PageRetriever:
             candidate_ids = [item_id for item_id, _ in self.vector_store.search(q_vec.tolist(), topk=max(topk * 5, 20))]
             candidate_pages = [self.id_to_page[item_id] for item_id in candidate_ids if item_id in self.id_to_page]
 
+        use_bm25 = SETTINGS.enable_bm25_fallback and self._external_embed_failed
+        if use_bm25:
+            BM25_FALLBACK_COUNT.inc()
+
         scored: List[RetrievalHit] = []
         for page in candidate_pages:
             if inferred_doc_type and page.doc_type != inferred_doc_type:
@@ -319,11 +392,14 @@ class PageRetriever:
             overlap = len(q_tokens & page_tokens)
             lexical_score = overlap / max(len(q_tokens), 1)
 
-            # 7) 混合评分：语义 + 词面
+            # 7) 混合评分：语义 + 词面（外部 embedding 异常时可融合 BM25 兜底）
             # 真实系统里你还可以加：
             # - rerank（例如 ColPali late-interaction）
             # - 业务权重（近期文档加权、文档权限等）
             score = 0.4 * vec_score + 0.6 * lexical_score
+            if use_bm25:
+                bm25 = self._bm25_score_page(list(q_tokens), page.page_id)
+                score = 0.15 * vec_score + 0.25 * lexical_score + 0.60 * bm25
             q_plain = rewritten_query.strip()
             if q_plain and q_plain in (page.content or ""):
                 score += 0.35
@@ -350,8 +426,12 @@ class PageRetriever:
                     for h in scored
                 ]
                 scored.sort(key=lambda x: x.score, reverse=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                if SETTINGS.sentry_dsn:
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("component", "retriever")
+                        scope.set_tag("phase", "colpali_rerank")
+                        sentry_sdk.capture_exception(exc)
         return rewritten_query, scored[:topk]
 
     def get_page(self, page_id: str) -> Page:

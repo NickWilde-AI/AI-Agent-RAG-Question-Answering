@@ -32,8 +32,25 @@ from __future__ import annotations
 
 from typing import Optional
 
+from prometheus_client import Counter
+import sentry_sdk
+
 from .config import SETTINGS
 from .llm_client import LLMClient
+from .resilience import CircuitBreaker
+
+_ROUTER_CB = CircuitBreaker(
+    failure_threshold=SETTINGS.router_cb_failures,
+    recovery_seconds=SETTINGS.router_cb_recovery_seconds,
+)
+ROUTER_RULE_FALLBACK = Counter(
+    "rag_router_rule_fallback_total",
+    "Router fell back to rule routing (LLM unavailable or circuit open)",
+)
+
+
+def router_circuit_open() -> bool:
+    return SETTINGS.enable_router_circuit_breaker and not _ROUTER_CB.allow()
 
 
 class RouterAgent:
@@ -91,14 +108,36 @@ class RouterAgent:
             ).strip()
             if result in {self.BRANCH_FACT, self.BRANCH_MULTI, self.BRANCH_CHART}:
                 return result
-        except Exception:
+        except Exception as exc:
+            if SETTINGS.sentry_dsn:
+                with sentry_sdk.push_scope() as scope:
+                    scope.set_tag("component", "router")
+                    scope.set_tag("phase", "llm_route")
+                    sentry_sdk.capture_exception(exc)
             return None
         return None
 
     def route(self, query: str) -> str:
-        llm_branch = self._route_with_llm(query)
-        if llm_branch:
-            return llm_branch
+        use_llm = (
+            SETTINGS.enable_llm_router
+            and self.llm_client
+            and self.llm_client.enabled
+            and (not SETTINGS.enable_router_circuit_breaker or _ROUTER_CB.allow())
+        )
+        llm_routed = False
+        if use_llm:
+            try:
+                llm_branch = self._route_with_llm(query)
+                if llm_branch:
+                    _ROUTER_CB.record_success()
+                    llm_routed = True
+                    return llm_branch
+                _ROUTER_CB.record_failure()
+            except Exception:
+                _ROUTER_CB.record_failure()
+        # 只要开启了 LLM Router 但最终未走 LLM 分支，就记一次规则兜底。
+        if SETTINGS.enable_llm_router and not llm_routed:
+            ROUTER_RULE_FALLBACK.inc()
 
         q = query.lower()
         if any(x in q for x in ["图表", "柱状", "折线", "趋势", "数值", "销售额", "kpi"]):

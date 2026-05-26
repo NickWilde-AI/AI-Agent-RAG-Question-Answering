@@ -47,6 +47,13 @@ pythonProject1/
 
 # 离线评测产物（由 /eval/run 生成）
 reports/eval/
+data/eval_sets/
+data/eval_candidates*.jsonl
+data/rag_quality_testset.generated.json
+data/kafka_reindex_state.json
+data/release_rollout.json
+data/lora/
+artifacts/lora/
 
 # 误放在仓库根目录的隐私文件（兜底）
 *.pdf

@@ -30,6 +30,8 @@ llm_client.py — 大模型与 Embedding 的**统一网关**（OpenAI 兼容 SDK
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
+import time
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
@@ -47,7 +49,11 @@ class LLMClient:
 
     @classmethod
     def from_settings(cls) -> "LLMClient":
-        api_key = SETTINGS.oapi_api_key if "oapi.uk" in SETTINGS.openai_base_url and SETTINGS.oapi_api_key else SETTINGS.openai_api_key
+        api_key = (
+            SETTINGS.oapi_api_key
+            if "oapi.uk" in SETTINGS.openai_base_url and SETTINGS.oapi_api_key
+            else SETTINGS.openai_api_key
+        )
         if not api_key:
             return cls(client=None, chat_model=SETTINGS.openai_chat_model, embedding_model=SETTINGS.openai_embedding_model)
         kwargs = {"api_key": api_key}
@@ -59,27 +65,51 @@ class LLMClient:
     def enabled(self) -> bool:
         return self.client is not None
 
+    def _call_with_retry(self, fn):
+        last_exc: Optional[Exception] = None
+        attempts = max(1, SETTINGS.llm_max_retries + 1)
+        for idx in range(attempts):
+            try:
+                return fn()
+            except Exception as exc:
+                last_exc = exc
+                if idx + 1 >= attempts:
+                    break
+                delay = min(
+                    SETTINGS.llm_retry_base_seconds * (2 ** idx),
+                    SETTINGS.llm_retry_max_seconds,
+                )
+                # 轻微抖动，避免并发重试雪崩
+                delay = delay * (0.8 + random.random() * 0.4)
+                time.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
+
     def chat_text(self, system_prompt: str, user_prompt: str) -> str:
         if not self.client:
             raise RuntimeError("LLM client is not enabled.")
         try:
-            resp = self.client.responses.create(
-                model=self.chat_model,
-                input=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0,
+            resp = self._call_with_retry(
+                lambda: self.client.responses.create(
+                    model=self.chat_model,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0,
+                )
             )
             return (resp.output_text or "").strip()
         except Exception:
-            resp = self.client.chat.completions.create(
-                model=self.chat_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0,
+            resp = self._call_with_retry(
+                lambda: self.client.chat.completions.create(
+                    model=self.chat_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0,
+                )
             )
             return (resp.choices[0].message.content or "").strip()
 
@@ -87,18 +117,20 @@ class LLMClient:
         """通过 OpenAI function calling 选择工具名。"""
         if not self.client:
             raise RuntimeError("LLM client is not enabled.")
-        resp = self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是企业知识库 Agent Router，只能通过 function calling 选择一个最合适的工具。",
-                },
-                {"role": "user", "content": query},
-            ],
-            tools=tools,
-            tool_choice="required",
-            temperature=0,
+        resp = self._call_with_retry(
+            lambda: self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是企业知识库 Agent Router，只能通过 function calling 选择一个最合适的工具。",
+                    },
+                    {"role": "user", "content": query},
+                ],
+                tools=tools,
+                tool_choice="required",
+                temperature=0,
+            )
         )
         tool_calls = resp.choices[0].message.tool_calls or []
         if not tool_calls:
@@ -108,5 +140,5 @@ class LLMClient:
     def embed(self, text: str) -> List[float]:
         if not self.client:
             raise RuntimeError("Embedding client is not enabled.")
-        resp = self.client.embeddings.create(model=self.embedding_model, input=text)
+        resp = self._call_with_retry(lambda: self.client.embeddings.create(model=self.embedding_model, input=text))
         return list(resp.data[0].embedding)

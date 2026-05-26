@@ -16,6 +16,9 @@ Android 类比：
 配置：bootstrap 注入；RAG_SESSION_BACKEND=redis 时用 infra/redis_memory.py。
 """
 
+from src.models import QAResult
+
+
 from __future__ import annotations
 
 import json
@@ -98,7 +101,7 @@ class SessionMemory:
     )
     # session_id → 按时间追加的 QAResult 列表
     _history: Dict[str, List[QAResult]] = field(
-        default_factory=lambda: defaultdict(list), init=False, repr=False
+        default_factory=lambda: defaultdict[str, List[QAResult]](list), init=False, repr=False
     )
 
     def try_get(self, session_id: str, query: str) -> Optional[QAResult]:

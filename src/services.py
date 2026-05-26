@@ -6,8 +6,26 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from urllib import request
+from prometheus_client import Counter
+import sentry_sdk
 
 from .config import SETTINGS
+from .resilience import CircuitBreaker
+
+VLM_FALLBACK_COUNT = Counter(
+    "rag_vlm_fallback_total",
+    "VLM unavailable and downgraded to text pipeline",
+    ["reason"],
+)
+
+_VLM_CB = CircuitBreaker(
+    failure_threshold=max(1, SETTINGS.vlm_cb_failures),
+    recovery_seconds=max(1.0, SETTINGS.vlm_cb_recovery_seconds),
+)
+
+
+def vlm_circuit_open() -> bool:
+    return SETTINGS.enable_vlm_circuit_breaker and not _VLM_CB.allow()
 
 
 def post_json(url: str, payload: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
@@ -85,18 +103,55 @@ class VLMClient:
     def enabled(self) -> bool:
         return bool(self.api_url)
 
+    @staticmethod
+    def _guard_before_call() -> None:
+        if SETTINGS.enable_vlm_circuit_breaker and not _VLM_CB.allow():
+            VLM_FALLBACK_COUNT.labels(reason="circuit_open").inc()
+            raise RuntimeError("VLM circuit is open")
+
+    @staticmethod
+    def _record_failure() -> None:
+        if SETTINGS.enable_vlm_circuit_breaker:
+            _VLM_CB.record_failure()
+        VLM_FALLBACK_COUNT.labels(reason="api_error").inc()
+        if SETTINGS.sentry_dsn:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("component", "vlm")
+                scope.set_tag("phase", "api_call")
+                sentry_sdk.capture_message("vlm_api_failure", level="warning")
+
+    @staticmethod
+    def _record_success() -> None:
+        if SETTINGS.enable_vlm_circuit_breaker:
+            _VLM_CB.record_success()
+
     def answer(self, query: str, image_paths: List[str], mode: str) -> str:
-        data = post_json(self.api_url, {"query": query, "image_paths": image_paths, "mode": mode})
-        return str(data.get("answer", "")).strip()
+        self._guard_before_call()
+        try:
+            data = post_json(self.api_url, {"query": query, "image_paths": image_paths, "mode": mode})
+            self._record_success()
+            return str(data.get("answer", "")).strip()
+        except Exception:
+            self._record_failure()
+            raise
 
     def verify(self, query: str, answer: str, image_paths: List[str]) -> Optional[bool]:
-        data = post_json(self.api_url, {"query": query, "answer": answer, "image_paths": image_paths, "mode": "verify"})
-        value = data.get("verified")
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"yes", "true", "1", "pass"}
-        return None
+        self._guard_before_call()
+        try:
+            data = post_json(
+                self.api_url,
+                {"query": query, "answer": answer, "image_paths": image_paths, "mode": "verify"},
+            )
+            self._record_success()
+            value = data.get("verified")
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"yes", "true", "1", "pass"}
+            return None
+        except Exception:
+            self._record_failure()
+            raise
 
 
 @dataclass

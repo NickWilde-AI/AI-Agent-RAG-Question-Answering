@@ -1,0 +1,26 @@
+# 灰度网关示例：Traefik 按权重把流量分到 stable / canary
+# 需先由 scripts/release_rollout.py 生成 data/release_rollout.json 并人工同步权重
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.web.address=:8088
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./deploy/traefik/dynamic:/etc/traefik/dynamic:ro
+
+  rag-api-stable:
+    build: .
+    environment:
+      - RAG_ENABLE_LANGGRAPH=false
+    expose:
+      - "8000"
+
+  rag-api-canary:
+    build: .
+    environment:
+      - RAG_ENABLE_LANGGRAPH=true
+    expose:
+      - "8000"

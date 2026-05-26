@@ -23,7 +23,7 @@
 | 项 | 说明 |
 |----|------|
 | **应用入口** | `uvicorn offer_agent.api:app`（`offer_agent/api.py` → `src.interfaces.api:app`） |
-| **主文档** | 本 README；开关见 **`.env.example`**；实现细节见 **`src/`** 各模块头注释 |
+| **主文档** | 本 README；**功能总览**见 [`docs/产品功能总览.md`](docs/产品功能总览.md)；开关见 **`.env.example`** |
 | **隐私资料** | 简历、面试笔记、宣讲 PDF 等请放 **`private/`**（默认不入库，见 `private/README.md`） |
 
 ---
@@ -53,7 +53,7 @@ flowchart LR
 | **路由** | 三分支：`fact` / `multi` / `chart`；规则优先，可选 LLM / Function Calling |
 | **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并 |
 | **校验** | 规则可证性 + 可选 LLM / VLM 校验；失败可扩 top-k 或分支 fallback 重试 |
-| **编排** | 可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
+| **编排** | 默认 `QAEngine` 主链路；已接入 `LangGraphQAEngine`（`RAG_ENABLE_LANGGRAPH=true` 可切换）；可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
 | **可观测** | `/ask` 返回 `trace`（各阶段耗时与分支）；`/metrics` 暴露 Router / Verifier / 缓存等指标 |
 | **评测** | `POST /eval/run` 离线跑样本集；`GET /eval/last` 读最近报告；报告落盘 `reports/eval/`（已 gitignore） |
 | **服务化** | FastAPI：`/ask`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
@@ -253,6 +253,13 @@ bash scripts/one_click_demo.sh
 | `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy |
 | `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | `/ask` 冒烟（需服务已启动） |
 | `python scripts/stage3_test_gate.py --base http://127.0.0.1:8000` | **提测门禁**：`/health`、`/ask`+trace、`/eval/run`、`/eval/last` |
+| `bash scripts/smoke_vllm_stack.sh` | vLLM 部署冒烟（/health /chat /v1/models /capabilities） |
+| `bash scripts/smoke_monitoring_stack.sh` | 监控栈冒烟（Prometheus + Grafana） |
+| `bash scripts/lora/run_minicpm_lora_pipeline.sh eval-only` | LoRA 对比评测流水线（默认不训练） |
+| `bash scripts/drill_gray_release.sh` | 灰度演练：生成并应用 stable/canary/shadow 权重 |
+| `bash scripts/drill_rate_limit.sh` | 限流演练：统计 200/429 比例 |
+| `bash scripts/drill_incident_replay.sh` | 故障演练：质量失败样本自动回放 |
+| `bash scripts/run_ocr_vs_visual_eval.sh` | 一键产出视觉链路 vs OCR 基线对照报告 |
 
 提测示例（先 `bash scripts/one_click_demo.sh`）：
 
@@ -284,6 +291,8 @@ Issue 与 Pull Request 均欢迎。提交前请确认：
 | 资源 | 内容 |
 |------|------|
 | `.env.example` | 全部 `RAG_*` 与外部服务 URL |
+| `docs/产品功能总览.md` | 功能全量清单、开关、运维与验收入口 |
+| `docs/kafka-reindex.md` | Kafka 上传事件触发增量建库协议 |
 | `src/pipeline.py` | 主链路编排与 fallback |
 | `src/retriever.py` | 混合检索与 rerank |
 | `src/api.py` | HTTP 入口与指标注册 |

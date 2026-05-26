@@ -10,3 +10,7 @@ openpyxl
 python-docx
 python-pptx
 pymupdf
+langgraph
+sentry-sdk
+kafka-python
+pyyaml
