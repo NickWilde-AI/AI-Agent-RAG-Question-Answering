@@ -38,20 +38,53 @@ install_docker() {
   systemctl enable --now docker
 }
 
+docker_gpu_ok() {
+  if docker info 2>/dev/null | grep -qi 'nvidia'; then
+    return 0
+  fi
+  if command -v nvidia-ctk >/dev/null 2>&1; then
+    return 0
+  fi
+  # 网络不稳时拉 cuda 镜像易失败；仅作辅助检测
+  timeout 90 docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1
+}
+
 install_nvidia_container() {
-  if docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
-    log "NVIDIA Container Toolkit 可用"
+  if docker_gpu_ok; then
+    log "Docker GPU 运行时已就绪（阿里云 GPU 镜像通常已预装），跳过 Toolkit 安装"
     return
   fi
-  log "配置 NVIDIA Container Toolkit..."
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  apt-get update -y
-  apt-get install -y nvidia-container-toolkit
-  nvidia-ctk runtime configure --runtime=docker
-  systemctl restart docker
+
+  log "尝试安装 NVIDIA Container Toolkit..."
+  if apt-cache show nvidia-container-toolkit >/dev/null 2>&1; then
+    apt-get install -y nvidia-container-toolkit || true
+    nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+    systemctl restart docker 2>/dev/null || true
+    if docker_gpu_ok; then
+      log "已通过 apt 安装 NVIDIA Container Toolkit"
+      return
+    fi
+  fi
+
+  # 官方源（国内可能 reset；失败不阻断，阿里云镜像常已具备驱动）
+  if curl -fsSL --connect-timeout 15 https://nvidia.github.io/libnvidia-container/gpgkey \
+    | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null; then
+    curl -fsSL --connect-timeout 15 https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list || true
+    apt-get update -y || true
+    apt-get install -y nvidia-container-toolkit || true
+    nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+    systemctl restart docker 2>/dev/null || true
+  else
+    log "警告: 无法从 nvidia.github.io 拉取 gpg（Connection reset 常见），将尝试直接启动 compose"
+  fi
+
+  if docker_gpu_ok; then
+    log "NVIDIA Container Toolkit 配置完成"
+  else
+    log "警告: 未验证 Docker GPU；若 vLLM 启动失败，请在阿里云控制台确认已选 GPU 镜像"
+  fi
 }
 
 clone_repo() {
@@ -141,8 +174,8 @@ quick_smoke() {
 main() {
   need_root
   install_docker
-  install_nvidia_container
   clone_repo
+  install_nvidia_container
   prepare_env
   open_firewall_hint
   compose_up
