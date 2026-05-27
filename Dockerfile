@@ -20,6 +20,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY offer_agent ./offer_agent
 COPY src ./src
+COPY scripts ./scripts
 COPY web ./web
 COPY data/demo_pages.json ./data/demo_pages.json
 COPY main.py .
