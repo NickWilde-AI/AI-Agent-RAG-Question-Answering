@@ -64,6 +64,32 @@ def _evidence_chunks_from_answer(answer: str) -> List[str]:
     return []
 
 
+def _meaningful_chunks(chunks: List[str]) -> List[str]:
+    """过滤引用模板词和过泛化词，降低规则 verifier 误判通过概率。"""
+    noise = {
+        "依据",
+        "文档",
+        "结论",
+        "摘录",
+        "材料",
+        "页面",
+        "问题",
+        "回答",
+        "source",
+        "file",
+    }
+    out: List[str] = []
+    for chunk in chunks:
+        c = chunk.strip().lower()
+        if not c or c in noise:
+            continue
+        if len(c) <= 1:
+            continue
+        if c not in out:
+            out.append(c)
+    return out
+
+
 class Verifier:
     """
     规则版 verifier。
@@ -126,9 +152,11 @@ class Verifier:
 
         all_text = " ".join((p.content or "") + " " + " ".join(p.fields.keys()) for p in pages).lower()
         answer_lower = answer.lower()
-        chunks = _evidence_chunks_from_answer(answer_lower)
+        chunks = _meaningful_chunks(_evidence_chunks_from_answer(answer_lower))
         if chunks:
-            return any(c.lower() in all_text for c in chunks if len(c) >= 2)
+            supported = sum(1 for c in chunks if len(c) >= 2 and c.lower() in all_text)
+            required = 1 if len(chunks) <= 2 else 2
+            return supported >= required
         # 西文空格分词兜底
         answer_text = (
             answer_lower.replace("[engine=gpt4o]", "")

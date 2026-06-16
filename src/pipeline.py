@@ -238,6 +238,25 @@ class QAEngine:
                 out.append(n)
         return out
 
+    def _citation_details(self, hits: List[RetrievalHit], limit: int = 5) -> List[dict]:
+        """生成轻量引用详情，供 API/验收回放展示，不改变生成模型输入。"""
+        details: List[dict] = []
+        for hit in hits[:limit]:
+            page = self.retriever.get_page(hit.page_id)
+            fname = self._source_file_names([page])[0] if page else hit.page_id
+            excerpt = " ".join((page.content or "").split())[:180]
+            details.append(
+                {
+                    "page_id": hit.page_id,
+                    "doc_id": page.doc_id,
+                    "source_file": fname,
+                    "page_no": "" if page.page_no is None else str(page.page_no),
+                    "score": f"{hit.score:.4f}",
+                    "excerpt": excerpt,
+                }
+            )
+        return details
+
     def _expand_pages_for_evidence(self, hit_pages: List[Page]) -> List[Page]:
         """
         白话：检索只命中了几页，但「答题 / 校验」有时需要**同一文件里更多页**一起看。
@@ -360,6 +379,7 @@ class QAEngine:
                 hits=[],
                 retry_hits=None,
                 source_files=[],
+                citation_details=[],
                 trace=AgentTrace(
                     route_branch=RouterAgent.BRANCH_FACT,
                     fallback_triggered=False,
@@ -401,6 +421,7 @@ class QAEngine:
         )
 
         low_conf_retry_hits = None
+        low_conf_retry_query = ""
         if self._is_low_confidence(hits) and SETTINGS.enable_agentic_retry_refine:
             low_conf_answer = "材料中未找到足够依据来回答该问题。"
             low_conf_evidence = self._evidence_pages_for_verify(route_branch, hits)
@@ -412,6 +433,7 @@ class QAEngine:
                 evidence_pages=low_conf_evidence,
             )
             retry_query = self._refined_retry_query(query=query, branch=route_branch, critique=critique)
+            low_conf_retry_query = retry_query
             stage_traces.append(
                 StageTrace(
                     stage="agentic_critique",
@@ -445,6 +467,8 @@ class QAEngine:
                 "材料中未找到足够依据来回答该问题。"
                 "请补充更具体的关键词（文档名、字段名、时间、模块名）后再试。"
             )
+            if low_conf_retry_query:
+                answer += f" 系统已尝试改写检索：{low_conf_retry_query}，仍未找到可靠证据。"
             result = QAResult(
                 query=query,
                 rewritten_query=rewritten_query,
@@ -454,6 +478,7 @@ class QAEngine:
                 hits=hits,
                 retry_hits=low_conf_retry_hits,
                 source_files=[],
+                citation_details=self._citation_details(low_conf_retry_hits or hits),
                 trace=AgentTrace(
                     route_branch=route_branch,
                     fallback_triggered=False,
@@ -572,6 +597,7 @@ class QAEngine:
             hits=hits,
             retry_hits=retry_hits,
             source_files=source_files,
+            citation_details=self._citation_details(retry_hits or hits),
             trace=AgentTrace(
                 route_branch=route_branch,
                 fallback_triggered=fallback_triggered,

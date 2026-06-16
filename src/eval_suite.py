@@ -99,6 +99,34 @@ DEFAULT_EVAL_SAMPLES = [
         gold_branch="multi_page_qa",
         category="培训与汇报 PPT",
     ),
+    EvalSample(
+        query="华东区负责人是谁？",
+        gold_pages=["report_p1"],
+        gold_answer="李雷",
+        gold_branch="fact_qa",
+        category="业务图表与报表",
+    ),
+    EvalSample(
+        query="采购申请单的发票日期是什么？",
+        gold_pages=["form_p3"],
+        gold_answer="2024-09-03",
+        gold_branch="fact_qa",
+        category="合同与工业表单",
+    ),
+    EvalSample(
+        query="产品线B销售额是多少？",
+        gold_pages=["report_p1"],
+        gold_answer="180",
+        gold_branch="chart_qa",
+        category="业务图表与报表",
+    ),
+    EvalSample(
+        query="故障代码 E-203 是什么？",
+        gold_pages=["manual_en_p8"],
+        gold_answer="E-203",
+        gold_branch="fact_qa",
+        category="英文手册",
+    ),
 ]
 
 

@@ -60,6 +60,9 @@ def relaxed_exact_match(pred: str, gold: str, tol: float = 0.05) -> bool:
     gold_norm = normalize_answer(gold)
     if pred_norm == gold_norm:
         return True
+    # 企业字段类答案常带“依据文档”前缀；短金标值被包含即可视为命中。
+    if gold_norm and len(gold_norm) <= 32 and gold_norm in pred_norm:
+        return True
 
     num_pattern = r"-?\d+(\.\d+)?"
     pred_hit = re.search(num_pattern, pred_norm)

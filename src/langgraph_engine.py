@@ -115,16 +115,17 @@ class LangGraphQAEngine:
         query = state["query"]
         if not self._base._is_smalltalk_query(query):
             return {"should_finish": False}
-        result = QAResult(
-            query=query,
-            rewritten_query=query,
-            branch=RouterAgent.BRANCH_FACT,
-            answer=self._base._fallback_smalltalk_answer(),
+            result = QAResult(
+                query=query,
+                rewritten_query=query,
+                branch=RouterAgent.BRANCH_FACT,
+                answer=self._base._fallback_smalltalk_answer(),
             verified=False,
-            hits=[],
-            retry_hits=None,
-            source_files=[],
-            trace=AgentTrace(
+                hits=[],
+                retry_hits=None,
+                source_files=[],
+                citation_details=[],
+                trace=AgentTrace(
                 route_branch=RouterAgent.BRANCH_FACT,
                 fallback_triggered=False,
                 retry_reason="smalltalk_blocked",
@@ -184,6 +185,8 @@ class LangGraphQAEngine:
             )
         )
         low_conf = self._base._is_low_confidence(hits)
+        low_conf_retry_hits = None
+        low_conf_retry_query = ""
         if low_conf and SETTINGS.enable_agentic_retry_refine:
             low_conf_answer = "材料中未找到足够依据来回答该问题。"
             low_conf_evidence = self._base._evidence_pages_for_verify(state["route_branch"], hits)
@@ -199,6 +202,7 @@ class LangGraphQAEngine:
                 branch=state["route_branch"],
                 critique=critique,
             )
+            low_conf_retry_query = retry_query
             traces.append(
                 StageTrace(
                     stage="agentic_critique",
@@ -209,6 +213,7 @@ class LangGraphQAEngine:
             retry_topk = self._base._resolve_retry_topk(state["effective_topk"])
             tr = time.perf_counter()
             retry_rewritten_query, retry_hits = self.retriever.retrieve(query=retry_query, topk=retry_topk)
+            low_conf_retry_hits = retry_hits
             traces.append(
                 StageTrace(
                     stage="retry_retrieve",
@@ -230,6 +235,8 @@ class LangGraphQAEngine:
                 "材料中未找到足够依据来回答该问题。"
                 "请补充更具体的关键词（文档名、字段名、时间、模块名）后再试。"
             )
+            if low_conf_retry_query:
+                answer += f" 系统已尝试改写检索：{low_conf_retry_query}，仍未找到可靠证据。"
             result = QAResult(
                 query=state["query"],
                 rewritten_query=rewritten_query,
@@ -237,8 +244,9 @@ class LangGraphQAEngine:
                 answer=answer,
                 verified=False,
                 hits=hits,
-                retry_hits=None,
+                retry_hits=low_conf_retry_hits,
                 source_files=[],
+                citation_details=self._base._citation_details(low_conf_retry_hits or hits),
                 trace=AgentTrace(
                     route_branch=state["route_branch"],
                     fallback_triggered=False,
@@ -429,6 +437,7 @@ class LangGraphQAEngine:
             hits=out.get("hits", []),
             retry_hits=out.get("retry_hits"),
             source_files=out.get("source_files", []),
+            citation_details=self._base._citation_details(out.get("retry_hits") or out.get("hits", [])),
             trace=AgentTrace(
                 route_branch=out.get("route_branch", RouterAgent.BRANCH_FACT),
                 fallback_triggered=bool(out.get("fallback_triggered", False)),

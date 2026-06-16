@@ -102,4 +102,5 @@ class QAResult:
     retry_hits: Optional[List[RetrievalHit]] = None
     tool_scores: Dict[str, float] = field(default_factory=dict)
     source_files: List[str] = field(default_factory=list)
+    citation_details: List[Dict[str, str]] = field(default_factory=list)
     trace: Optional[AgentTrace] = None

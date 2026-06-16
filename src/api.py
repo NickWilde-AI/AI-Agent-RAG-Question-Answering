@@ -102,6 +102,7 @@ class AskResponse(BaseModel):
     trace: Optional[Dict[str, Any]] = None
     cost_ms: int
     source_files: List[str] = Field(default_factory=list, description="本次回答依据的源文件完整文件名（去重）")
+    citations: List[Dict[str, Any]] = Field(default_factory=list, description="本次回答依据的页级证据片段")
 
 
 class EvalRunRequest(BaseModel):
@@ -157,6 +158,8 @@ def capabilities() -> Dict[str, Any]:
         "local_colpali_model_dir": SETTINGS.colpali_model_dir,
         "redis_memory": SETTINGS.session_backend == "redis",
         "session_cache": SETTINGS.enable_session_cache,
+        "agentic_query_expansion": SETTINGS.enable_query_expansion,
+        "agentic_retry_refine": SETTINGS.enable_agentic_retry_refine,
         "benchmark": {
             "recall_at_10": SETTINGS.benchmark_recall_at_10,
             "accuracy": SETTINGS.benchmark_accuracy,
@@ -269,13 +272,27 @@ def ask(req: AskRequest) -> AskResponse:
         for st in result.trace.stages:
             STAGE_LATENCY.labels(stage=st.stage).observe(max(st.elapsed_ms, 0) / 1000.0)
 
+    def _hit_payload(hit) -> Dict[str, Any]:
+        page = engine.retriever.get_page(hit.page_id)
+        meta = page.metadata or {}
+        title = meta.get("title") or meta.get("sheet_name") or ""
+        source_file = Path(page.source_file).name if page.source_file else page.doc_id
+        return {
+            "page_id": hit.page_id,
+            "score": hit.score,
+            "doc_id": page.doc_id,
+            "source_file": source_file,
+            "page_no": page.page_no,
+            "title": title,
+        }
+
     return AskResponse(
         answer=result.answer,
         branch=result.branch,
         verified=result.verified,
         rewritten_query=result.rewritten_query,
-        hits=[{"page_id": h.page_id, "score": h.score} for h in result.hits],
-        retry_hits=[{"page_id": h.page_id, "score": h.score} for h in result.retry_hits] if result.retry_hits else None,
+        hits=[_hit_payload(h) for h in result.hits],
+        retry_hits=[_hit_payload(h) for h in result.retry_hits] if result.retry_hits else None,
         loop_steps=loop_steps,
         trace=(
             {
@@ -296,4 +313,5 @@ def ask(req: AskRequest) -> AskResponse:
         ),
         cost_ms=elapsed_ms,
         source_files=result.source_files,
+        citations=result.citation_details,
     )

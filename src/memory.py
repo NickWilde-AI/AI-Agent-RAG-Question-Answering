@@ -45,6 +45,7 @@ class SessionCacheEntry:
     verified: bool
     page_ids: List[str]  # 上次检索命中的 page_id
     source_files: List[str] = field(default_factory=list)
+    citation_details: List[Dict[str, str]] = field(default_factory=list)
 
     def to_qa_result(self) -> QAResult:
         """读缓存：包装为 QAResult，branch 固定 cache_hit 便于日志/指标区分。"""
@@ -56,6 +57,7 @@ class SessionCacheEntry:
             verified=self.verified,
             hits=[RetrievalHit(page_id=p, score=1.0) for p in self.page_ids],
             source_files=list(self.source_files),
+            citation_details=list(self.citation_details),
         )
 
     @classmethod
@@ -70,6 +72,7 @@ class SessionCacheEntry:
             verified=result.verified,
             page_ids=[h.page_id for h in result.hits],
             source_files=list(result.source_files),
+            citation_details=list(result.citation_details),
         )
 
     def to_json(self) -> str:

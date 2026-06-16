@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Dict, List, Optional
 
 from .config import SETTINGS
@@ -91,6 +92,22 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
             dedup.append(p)
     pages = dedup
 
+    for page in pages:
+        for key, value in page.fields.items():
+            if key and key in query:
+                return f"依据文档：{_doc_full_name(page)}\n{value}"
+
+    code_hits = re.findall(r"\b[A-Z]+-\d+\b", query.upper())
+    if code_hits:
+        for page in pages:
+            content = page.content or ""
+            for code in code_hits:
+                if code in content.upper():
+                    sentences = re.split(r"(?<=[。.!?])\s*", content.strip())
+                    for sentence in sentences:
+                        if code in sentence.upper():
+                            return f"依据文档：{_doc_full_name(page)}\n{sentence.strip()}"
+
     vlm = VLMClient()
     for page in pages:
         if page.image_path and vlm.enabled:
@@ -133,6 +150,9 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
 
     if len(pages) == 1 and pages[0].fields:
         page = pages[0]
+        for key, value in page.fields.items():
+            if key and key in query:
+                return f"依据文档：{_doc_full_name(page)}\n{value}"
         for key in ["采购单号", "发票日期", "负责人"]:
             if key in page.fields:
                 return f"依据文档：{_doc_full_name(page)}\n{page.fields[key]}"
@@ -230,4 +250,3 @@ def chart_qa(query: str, pages: List[Page]) -> str:
 
     pick = _best_matching_token(query, list(merged.keys()))
     return prefix + f"{pick}（{merged[pick]}）"
-
