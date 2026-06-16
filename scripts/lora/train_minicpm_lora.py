@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any, Dict
 
 import yaml
 
@@ -34,7 +35,58 @@ def require_deps():
         ) from exc
 
 
+def validate_config(cfg: Dict[str, Any]) -> None:
+    required = [
+        "model_name_or_path",
+        "dataset_path",
+        "val_dataset_path",
+        "output_dir",
+        "max_seq_length",
+        "lora",
+        "quantization",
+    ]
+    missing = [k for k in required if k not in cfg]
+    if missing:
+        raise ValueError(f"配置缺少字段: {missing}")
+    for key in ("dataset_path", "val_dataset_path"):
+        path = Path(cfg[key])
+        if not path.exists():
+            raise FileNotFoundError(f"{key} not found: {path}")
+        if path.stat().st_size == 0:
+            raise ValueError(f"{key} is empty: {path}")
+    lora = cfg["lora"]
+    if int(lora.get("r", 0)) <= 0:
+        raise ValueError("lora.r must be positive")
+    if not lora.get("target_modules"):
+        raise ValueError("lora.target_modules must not be empty")
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Train MiniCPM-V LoRA")
+    ap.add_argument("--config", default="configs/lora/minicpm_v26_qlora.yaml")
+    ap.add_argument("--dry-run", action="store_true", help="只校验配置和数据文件，不加载模型训练")
+    args = ap.parse_args()
+
+    cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    validate_config(cfg)
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "config": args.config,
+                    "model_name_or_path": cfg["model_name_or_path"],
+                    "dataset_path": cfg["dataset_path"],
+                    "val_dataset_path": cfg["val_dataset_path"],
+                    "output_dir": cfg["output_dir"],
+                    "lora": cfg["lora"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
     require_deps()
     import torch
     from datasets import load_dataset
@@ -46,12 +98,6 @@ def main() -> int:
         Trainer,
         TrainingArguments,
     )
-
-    ap = argparse.ArgumentParser(description="Train MiniCPM-V LoRA")
-    ap.add_argument("--config", default="configs/lora/minicpm_v26_qlora.yaml")
-    args = ap.parse_args()
-
-    cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
 
     bnb_cfg = BitsAndBytesConfig(
         load_in_4bit=cfg["quantization"]["load_in_4bit"],
@@ -122,4 +168,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

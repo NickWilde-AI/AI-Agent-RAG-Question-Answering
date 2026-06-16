@@ -13,6 +13,12 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
 LORA_URL="${LORA_URL:-http://127.0.0.1:8010}"
 MIN_DELTA="${MIN_DELTA:-0.00}"
 COMPARE_OUT_DIR="${COMPARE_OUT_DIR:-logs/lora_eval/${EXPERIMENT_ID}}"
+STRICT_GATE="${STRICT_GATE:-1}"
+
+if [[ "$MODE" != "eval-only" && "$MODE" != "train-and-eval" ]]; then
+  echo "[lora-pipeline] invalid mode: $MODE (expected eval-only | train-and-eval)" >&2
+  exit 2
+fi
 
 echo "[lora-pipeline] experiment_id=$EXPERIMENT_ID mode=$MODE"
 
@@ -50,6 +56,14 @@ python scripts/lora/eval_lora_checkpoint.py \
   --lora-url "$LORA_URL" \
   --out-dir "$COMPARE_OUT_DIR"
 
+gate_rc=0
+python scripts/lora/lora_release_gate.py \
+  --base-report "$COMPARE_OUT_DIR/base_report.json" \
+  --lora-report "$COMPARE_OUT_DIR/lora_report.json" \
+  --min-pass-delta "$MIN_DELTA" \
+  --output-json "$COMPARE_OUT_DIR/lora_release_gate.json" \
+  --output-md "$COMPARE_OUT_DIR/lora_release_gate.md" || gate_rc=$?
+
 python scripts/lora/summarize_lora_eval.py \
   --compare "$COMPARE_OUT_DIR/compare_summary.json" \
   --experiment-id "$EXPERIMENT_ID" \
@@ -57,5 +71,10 @@ python scripts/lora/summarize_lora_eval.py \
   --lora-url "$LORA_URL" \
   --min-delta "$MIN_DELTA" \
   --note "LoRA pipeline auto summary"
+
+if [[ "$STRICT_GATE" == "1" && "$gate_rc" != "0" ]]; then
+  echo "[lora-pipeline] release gate blocked; reports kept under $COMPARE_OUT_DIR" >&2
+  exit "$gate_rc"
+fi
 
 echo "[lora-pipeline] done"
