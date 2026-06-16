@@ -7,7 +7,7 @@ REPO_URL="${REPO_URL:-https://github.com/NickWilde-AI/AI-Agent-RAG-Question-Answ
 APP_DIR="${APP_DIR:-/data/rag/AI-Agent-RAG-Question-Answering}"
 DATA_ROOT="${DATA_ROOT:-/data}"
 BRANCH="${BRANCH:-main}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.aliyun.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-deploy/compose/docker-compose.aliyun.yml}"
 
 log() { echo "[deploy] $*"; }
 

@@ -4,7 +4,7 @@
     uvicorn scripts.colpali_rerank_service:app --host 127.0.0.1 --port 9001
 
 依赖：
-    pip install -r requirements-colpali.txt
+    pip install -r requirements/colpali.txt
 """
 
 from __future__ import annotations

@@ -1,6 +1,0 @@
-# 用于 Dockerfile.colpali：基础镜像已含 CUDA 版 PyTorch，此处不再装 torch，减小冲突。
-colpali-engine>=0.3.0,<0.4.0
-pillow
-fastapi
-uvicorn
-pydantic

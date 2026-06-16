@@ -9,17 +9,21 @@ services:
     ports:
       - "8088:8088"
     volumes:
-      - ./deploy/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ../traefik/dynamic:/etc/traefik/dynamic:ro
 
   rag-api-stable:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     environment:
       - RAG_ENABLE_LANGGRAPH=false
     expose:
       - "8000"
 
   rag-api-canary:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     environment:
       - RAG_ENABLE_LANGGRAPH=true
     expose:

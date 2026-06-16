@@ -1,7 +1,7 @@
 # ColPali rerank 独立服务（需 NVIDIA GPU + 宿主机已安装 nvidia-container-toolkit）。
 # 权重目录挂载只读：./models/colpali-v1.3 -> /models/colpali-v1.3
 #
-# 构建：docker build -f Dockerfile.colpali -t rag-colpali:latest .
+# 构建：docker build -f deploy/docker/Dockerfile.colpali -t rag-colpali:latest .
 
 FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     COLPALI_MODEL_DIR=/models/colpali-v1.3
 
-COPY requirements-colpali-docker.txt /tmp/requirements-colpali-docker.txt
+COPY requirements/colpali-docker.txt /tmp/requirements-colpali-docker.txt
 RUN pip install --upgrade pip && pip install -r /tmp/requirements-colpali-docker.txt
 
 COPY scripts/__init__.py ./scripts/__init__.py

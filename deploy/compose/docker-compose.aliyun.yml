@@ -1,11 +1,10 @@
-# vLLM + MiniCPM-V + RAG API 一键部署（GPU）
+# 阿里云 GPU 机（A10 等）推荐 compose：模型缓存落 /data，国内可用 HF 镜像
 #
-# 启动：
-#   cp .env.example .env
-#   docker compose -f docker-compose.vllm.yml up --build -d
+# 用法（在仓库根目录）：
+#   cp .env.example .env   # 填入 OPENAI_API_KEY 等
+#   docker compose -f deploy/compose/docker-compose.aliyun.yml up -d --build
 #
-# 访问：
-#   http://<IP>:8000/chat
+# 访问：http://<公网IP>:8000/chat
 
 services:
   redis:
@@ -29,11 +28,16 @@ services:
       - --max-model-len
       - "4096"
       - --gpu-memory-utilization
-      - "0.9"
+      - "0.88"
+      - --trust-remote-code
     ports:
       - "8001:8001"
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+    volumes:
+      - ${DATA_ROOT:-/data}/huggingface:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
@@ -47,22 +51,26 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/v1/models', timeout=5).read()",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/v1/models', timeout=10).read()",
         ]
-      interval: 20s
-      timeout: 6s
-      retries: 6
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 600s
     restart: unless-stopped
 
   vlm-gateway:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     command: python -m uvicorn scripts.vlm_gateway:app --host 0.0.0.0 --port 9010
     environment:
       VLM_OPENAI_BASE_URL: http://vllm:8001/v1
       VLM_OPENAI_API_KEY: ${VLM_OPENAI_API_KEY:-EMPTY}
       VLM_MODEL: ${VLM_MODEL:-openbmb/MiniCPM-V-2_6}
     volumes:
-      - ./kb_pages:/app/kb_pages:ro
+      - ../../kb_pages:/app/kb_pages:ro
+      - ../../data:/app/data:ro
     depends_on:
       vllm:
         condition: service_healthy
@@ -76,24 +84,29 @@ services:
         ]
       interval: 20s
       timeout: 6s
-      retries: 6
+      retries: 10
     restart: unless-stopped
 
   rag-api:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ../../.env
     environment:
       RAG_VLM_API: http://vlm-gateway:9010/answer
-      RAG_CHART_PARSING_API: ""
       RAG_SESSION_BACKEND: redis
       REDIS_URL: redis://redis:6379/0
       RAG_ENABLE_SESSION_CACHE: "true"
       RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+      RAG_ENABLE_LANGGRAPH: ${RAG_ENABLE_LANGGRAPH:-false}
     volumes:
-      - ./kb_pages:/app/kb_pages:ro
+      - ../../kb_pages:/app/kb_pages
+      - ../../data:/app/data
+      - ../../user_docs:/app/user_docs
+      - ${DATA_ROOT:-/data}/rag-logs:/app/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -109,5 +122,6 @@ services:
         ]
       interval: 20s
       timeout: 6s
-      retries: 6
+      retries: 10
+      start_period: 60s
     restart: unless-stopped

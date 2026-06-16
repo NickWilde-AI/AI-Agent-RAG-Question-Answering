@@ -7,7 +7,7 @@
 #   3. cp .env.example .env，填 OPENAI_*（或 vLLM 的 OPENAI_BASE_URL）
 #
 # 启动：
-#   docker compose -f docker-compose.cloud-gpu.yml up --build -d
+#   docker compose -f deploy/compose/docker-compose.cloud-gpu.yml up --build -d
 #
 # 访问：http://<IP>:8000/chat
 
@@ -25,15 +25,15 @@ services:
 
   colpali:
     build:
-      context: .
-      dockerfile: Dockerfile.colpali
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.colpali
     ports:
       - "9001:9001"
     environment:
       COLPALI_MODEL_DIR: /models/colpali-v1.3
     volumes:
-      - ./models/colpali-v1.3:/models/colpali-v1.3:ro
-      - ./kb_pages:/app/kb_pages:ro
+      - ../../models/colpali-v1.3:/models/colpali-v1.3:ro
+      - ../../kb_pages:/app/kb_pages:ro
     deploy:
       resources:
         reservations:
@@ -44,11 +44,13 @@ services:
     restart: unless-stopped
 
   rag-api:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ../../.env
     environment:
       RAG_ENABLE_REAL_EMBEDDING: "false"
       RAG_ENABLE_MULTIMODAL_EMBEDDING: "false"
@@ -59,8 +61,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       RAG_ENABLE_SESSION_CACHE: "true"
     volumes:
-      - ./kb_pages:/app/kb_pages:ro
-      # - ./data/user_pages.json:/app/data/user_pages.json:ro
+      - ../../kb_pages:/app/kb_pages:ro
+      # - ../../data/user_pages.json:/app/data/user_pages.json:ro
     depends_on:
       redis:
         condition: service_healthy

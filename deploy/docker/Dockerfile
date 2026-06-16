@@ -1,6 +1,6 @@
 # 仅打包 API 服务（轻量模式：无 ColPali、无 GPU）。
-# 构建：docker build -t rag-agent:latest .
-# 运行：见 docker-compose.yml 或 README 中说明。
+# 构建：docker build -f deploy/docker/Dockerfile -t rag-agent:latest .
+# 运行：见 deploy/compose/docker-compose.yml 或 README 中说明。
 
 FROM python:3.11-slim-bookworm
 

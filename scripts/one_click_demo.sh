@@ -42,7 +42,7 @@ python -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
 python -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
 python -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
 if [ "${RAG_LITE_MODE}" = "0" ]; then
-  python -m pip install -r requirements-colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+  python -m pip install -r requirements/colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
 fi
 
 if [ "${RAG_LITE_MODE}" != "0" ]; then

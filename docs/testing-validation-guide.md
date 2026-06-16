@@ -363,7 +363,7 @@ bash scripts/lora/run_minicpm_lora_pipeline.sh train-and-eval
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 
 健康检查：

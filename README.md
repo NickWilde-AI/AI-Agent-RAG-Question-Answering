@@ -84,8 +84,11 @@ flowchart LR
 ├── web/chat.html                  # 聊天前端（trace + 提测面板）
 ├── data/demo_pages.json           # 演示索引（随仓库）
 ├── private/                       # 本地隐私区（仅 README 可入库）
-├── docker-compose*.yml            # 本地或 GPU 云编排
-└── requirements*.txt              # Python 依赖
+├── deploy/
+│   ├── docker/                    # Dockerfile 与 ColPali 镜像构建文件
+│   └── compose/                   # 本地、GPU、监控、灰度等 compose 编排
+├── requirements/                  # ColPali 等专项依赖
+└── requirements.txt               # API 基础 Python 依赖
 ```
 
 > `user_docs/`、`kb_pages/`、`data/user_pages.json`、`reports/eval/` 等由 **`.gitignore`** 排除，请勿将敏感语料提交远程。
@@ -157,11 +160,11 @@ bash scripts/one_click_demo.sh
 
 #### 5.1 仅 API（低配可跑，不含 ColPali）
 
-`Dockerfile` + `docker-compose.yml`：内置 `data/demo_pages.json`，镜像内关闭远程 embedding / ColPali / Plan Loop。
+`deploy/docker/Dockerfile` + `deploy/compose/docker-compose.yml`：内置 `data/demo_pages.json`，镜像内关闭远程 embedding / ColPali / Plan Loop。
 
 ```bash
 cp .env.example .env   # 填好 OPENAI_* 等
-docker compose up --build
+docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 
 安全组放行 **8000**。
@@ -175,10 +178,10 @@ ColPali 单独容器占 GPU，主 API 经 `http://colpali:9001/rerank` 调用。
 # 自建索引：kb_pages/ + data/user_pages.json（image_path 建议 kb_pages/...）
 # 需 NVIDIA 驱动 + nvidia-container-toolkit
 cp .env.example .env
-docker compose -f docker-compose.cloud-gpu.yml up --build -d
+docker compose -f deploy/compose/docker-compose.cloud-gpu.yml up --build -d
 ```
 
-无 GPU 的 CPU 云机请勿强上 ColPali，用 **5.1** 即可。详见 `docker-compose.cloud-gpu.yml` 内注释。
+无 GPU 的 CPU 云机请勿强上 ColPali，用 **5.1** 即可。详见 `deploy/compose/docker-compose.cloud-gpu.yml` 内注释。
 
 ---
 
