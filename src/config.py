@@ -69,6 +69,13 @@ class Settings:
     enable_branch_fallback: bool = _get_bool("RAG_ENABLE_BRANCH_FALLBACK", True)
     vector_dim: int = int(os.getenv("RAG_VECTOR_DIM", "256"))
     enable_query_rewrite: bool = _get_bool("RAG_ENABLE_QUERY_REWRITE", True)
+    # Agentic retrieval 轻量版：把复杂问题拆成多个检索意图，再用 RRF 融合，减少单 query 漏召回。
+    enable_query_expansion: bool = _get_bool("RAG_ENABLE_QUERY_EXPANSION", True)
+    max_query_variants: int = int(os.getenv("RAG_MAX_QUERY_VARIANTS", "4"))
+    rrf_k: int = int(os.getenv("RAG_RRF_K", "60"))
+    retrieval_diversity_per_doc: int = int(os.getenv("RAG_RETRIEVAL_DIVERSITY_PER_DOC", "3"))
+    enable_agentic_retry_refine: bool = _get_bool("RAG_ENABLE_AGENTIC_RETRY_REFINE", True)
+    agentic_retry_max_missing_terms: int = int(os.getenv("RAG_AGENTIC_RETRY_MAX_MISSING_TERMS", "6"))
     enable_llm_router: bool = _get_bool("RAG_ENABLE_LLM_ROUTER", False)
     enable_llm_verifier: bool = _get_bool("RAG_ENABLE_LLM_VERIFIER", False)
     # 默认关闭：大库逐页真实 embedding 会长时间占满 CPU/网络，易把机器拖死

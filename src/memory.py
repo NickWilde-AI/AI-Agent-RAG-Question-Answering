@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Session Memory — 会话级记忆（本文件为默认「进程内」实现）。
 
@@ -15,11 +17,6 @@ Android 类比：
 
 配置：bootstrap 注入；RAG_SESSION_BACKEND=redis 时用 infra/redis_memory.py。
 """
-
-from src.models import QAResult
-
-
-from __future__ import annotations
 
 import json
 import re

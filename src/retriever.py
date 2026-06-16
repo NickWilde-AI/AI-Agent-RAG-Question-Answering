@@ -44,7 +44,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 from prometheus_client import Counter as PromCounter
@@ -132,6 +132,13 @@ def _tokenize(text: str) -> List[str]:
     for z in zh_chunks:
         if z not in tokens:
             tokens.append(z)
+        # 中文没有天然空格，补充短 n-gram，避免“采购申请单的采购单号”和“采购申请单。采购单号”无法重叠。
+        max_n = min(4, len(z))
+        for n in range(2, max_n + 1):
+            for i in range(0, len(z) - n + 1):
+                gram = z[i : i + n]
+                if gram not in tokens:
+                    tokens.append(gram)
     alnum = re.findall(r"[a-z0-9]{2,}", normalized)
     for a in alnum:
         if a not in tokens:
@@ -167,6 +174,7 @@ class PageRetriever:
         self._page_token_counters: Dict[str, Counter] = {}
         self._doc_freq: Dict[str, int] = defaultdict(int)
         self._avg_doc_len = 1.0
+        self.last_diagnostics: Dict[str, str] = {}
         self._build_bm25_stats()
         self._build_index()
 
@@ -331,6 +339,42 @@ class PageRetriever:
             rewritten = rewritten.replace(src, dst)
         return rewritten
 
+    def _query_variants(self, query: str, rewritten_query: str) -> List[str]:
+        """
+        轻量 query expansion。
+
+        现代 Agentic RAG 通常会先分析问题，把复合问题拆成多个检索意图；这里不依赖 LLM，
+        用规则产生少量稳定变体，再交给 RRF 融合，避免一次改写漏掉关键证据页。
+        """
+        variants: List[str] = []
+
+        def add(text: str) -> None:
+            normalized = " ".join((text or "").strip().split())
+            if normalized and normalized not in variants:
+                variants.append(normalized)
+
+        add(rewritten_query)
+        add(query)
+        if not SETTINGS.enable_query_expansion:
+            return variants[:1]
+
+        separators = r"[，,。；;？?\n]|(?:以及)|(?:并且)|(?:同时)|(?:分别)|(?:对比)|(?:和)|(?:与)"
+        for part in re.split(separators, rewritten_query):
+            part = part.strip()
+            if len(part) >= 4:
+                add(part)
+
+        # 抽取“文档名/字段名/编号/实体”式关键词，提升表单、报表和 PPT 的精确召回。
+        keyword_parts: List[str] = []
+        raw_keywords = re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,}|\d{2,}|[\u4e00-\u9fff]{2,}", rewritten_query)
+        for token in raw_keywords:
+            if len(token) >= 2 and token not in {"多少", "什么", "哪个", "如何", "请问"}:
+                keyword_parts.append(token)
+        if keyword_parts:
+            add(" ".join(keyword_parts[:8]))
+
+        return variants[: max(1, SETTINGS.max_query_variants)]
+
     @staticmethod
     def infer_doc_type(query: str) -> Optional[str]:
         """
@@ -350,6 +394,96 @@ class PageRetriever:
             return "ppt"
         return None
 
+    def _candidate_pages_for_query(self, q_vec: np.ndarray, topk: int) -> List[Page]:
+        if isinstance(self.vector_store, InMemoryVectorStore):
+            return self.pages
+        candidate_ids = [
+            item_id
+            for item_id, _ in self.vector_store.search(
+                q_vec.tolist(),
+                topk=max(topk * max(SETTINGS.max_query_variants, 1) * 5, 20),
+            )
+        ]
+        return [self.id_to_page[item_id] for item_id in candidate_ids if item_id in self.id_to_page]
+
+    def _score_pages(
+        self,
+        query_text: str,
+        q_vec: np.ndarray,
+        query_tokens: Iterable[str],
+        candidate_pages: List[Page],
+        inferred_doc_type: Optional[str],
+        use_bm25: bool,
+    ) -> List[RetrievalHit]:
+        q_tokens = set(query_tokens)
+        scored: List[RetrievalHit] = []
+        for page in candidate_pages:
+            if inferred_doc_type and page.doc_type != inferred_doc_type:
+                continue
+
+            # 语义分：向量相似度（演示版：点积；真实版：Milvus HNSW + cosine）
+            vec_score = _safe_dot(q_vec, self.page_vectors[page.page_id])
+
+            # 词面分：query token 与页面 token 的重叠比例（越大说明越像“字面相关”）
+            page_tokens = set(_tokenize(page.content + " " + " ".join(page.fields.keys())))
+            overlap = len(q_tokens & page_tokens)
+            lexical_score = overlap / max(len(q_tokens), 1)
+
+            # 混合评分：语义 + 词面（外部 embedding 异常时可融合 BM25 兜底）
+            score = 0.4 * vec_score + 0.6 * lexical_score
+            if use_bm25:
+                bm25 = self._bm25_score_page(list(q_tokens), page.page_id)
+                score = 0.15 * vec_score + 0.25 * lexical_score + 0.60 * bm25
+            q_plain = query_text.strip()
+            if q_plain and q_plain in (page.content or ""):
+                score += 0.35
+            scored.append(RetrievalHit(page_id=page.page_id, score=score))
+        scored.sort(key=lambda x: x.score, reverse=True)
+        return scored
+
+    def _fuse_ranked_hits(self, ranked_lists: List[List[RetrievalHit]]) -> List[RetrievalHit]:
+        if not ranked_lists:
+            return []
+        max_raw: Dict[str, float] = defaultdict(float)
+        rrf_scores: Dict[str, float] = defaultdict(float)
+        first_rank: Dict[str, int] = {}
+        for hits in ranked_lists:
+            for rank, hit in enumerate(hits, start=1):
+                max_raw[hit.page_id] = max(max_raw[hit.page_id], hit.score)
+                rrf_scores[hit.page_id] += 1.0 / (SETTINGS.rrf_k + rank)
+                first_rank[hit.page_id] = min(first_rank.get(hit.page_id, rank), rank)
+
+        max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
+        fused = [
+            RetrievalHit(
+                page_id=page_id,
+                score=(
+                    0.0
+                    if raw_score <= 1e-6
+                    else (0.65 * raw_score) + (0.35 * (rrf_scores[page_id] / max_rrf))
+                ),
+            )
+            for page_id, raw_score in max_raw.items()
+        ]
+        fused.sort(key=lambda x: (x.score, -first_rank.get(x.page_id, 10**9)), reverse=True)
+        return fused
+
+    def _apply_doc_diversity(self, hits: List[RetrievalHit], limit_per_doc: int) -> List[RetrievalHit]:
+        if limit_per_doc <= 0:
+            return hits
+        doc_counts: Dict[str, int] = defaultdict(int)
+        selected: List[RetrievalHit] = []
+        deferred: List[RetrievalHit] = []
+        for hit in hits:
+            page = self.id_to_page.get(hit.page_id)
+            doc_id = page.doc_id if page else hit.page_id
+            if doc_counts[doc_id] < limit_per_doc:
+                selected.append(hit)
+                doc_counts[doc_id] += 1
+            else:
+                deferred.append(hit)
+        return selected + deferred
+
     def retrieve(self, query: str, topk: int = SETTINGS.topk_default, doc_type: Optional[str] = None) -> Tuple[str, List[RetrievalHit]]:
         """
         在线检索（你可以把它当成“召回服务”的主逻辑）。
@@ -364,48 +498,34 @@ class PageRetriever:
         # 2) 文档类型预过滤：缩小检索空间，减少噪声页进入 top-k
         inferred_doc_type = doc_type or self.infer_doc_type(query)
 
-        # 3) embedding：把 query 编成向量（真实系统：文本 embedding / 多模态 embedding）
-        q_vec = self._embed_text(rewritten_query)
+        query_variants = self._query_variants(query, rewritten_query)
 
-        # 4) 词面 token：用于解释性更强的 lexical 匹配得分
-        q_tokens = set(_tokenize(rewritten_query))
-
-        candidate_pages = self.pages
-        if not isinstance(self.vector_store, InMemoryVectorStore):
-            candidate_ids = [item_id for item_id, _ in self.vector_store.search(q_vec.tolist(), topk=max(topk * 5, 20))]
-            candidate_pages = [self.id_to_page[item_id] for item_id in candidate_ids if item_id in self.id_to_page]
-
-        use_bm25 = SETTINGS.enable_bm25_fallback and self._external_embed_failed
+        variant_vectors: List[Tuple[str, np.ndarray]] = []
+        external_embed_failed = False
+        for variant in query_variants:
+            q_vec = self._embed_text(variant)
+            external_embed_failed = external_embed_failed or self._external_embed_failed
+            variant_vectors.append((variant, q_vec))
+        use_bm25 = SETTINGS.enable_bm25_fallback and external_embed_failed
         if use_bm25:
             BM25_FALLBACK_COUNT.inc()
 
-        scored: List[RetrievalHit] = []
-        for page in candidate_pages:
-            if inferred_doc_type and page.doc_type != inferred_doc_type:
-                continue
+        ranked_lists: List[List[RetrievalHit]] = []
+        for variant, q_vec in variant_vectors:
+            candidate_pages = self._candidate_pages_for_query(q_vec, topk)
+            ranked_lists.append(
+                self._score_pages(
+                    query_text=variant,
+                    q_vec=q_vec,
+                    query_tokens=_tokenize(variant),
+                    candidate_pages=candidate_pages,
+                    inferred_doc_type=inferred_doc_type,
+                    use_bm25=use_bm25,
+                )
+            )
 
-            # 5) 语义分：向量相似度（演示版：点积；真实版：Milvus HNSW + cosine）
-            vec_score = _safe_dot(q_vec, self.page_vectors[page.page_id])
-
-            # 6) 词面分：query token 与页面 token 的重叠比例（越大说明越像“字面相关”）
-            page_tokens = set(_tokenize(page.content + " " + " ".join(page.fields.keys())))
-            overlap = len(q_tokens & page_tokens)
-            lexical_score = overlap / max(len(q_tokens), 1)
-
-            # 7) 混合评分：语义 + 词面（外部 embedding 异常时可融合 BM25 兜底）
-            # 真实系统里你还可以加：
-            # - rerank（例如 ColPali late-interaction）
-            # - 业务权重（近期文档加权、文档权限等）
-            score = 0.4 * vec_score + 0.6 * lexical_score
-            if use_bm25:
-                bm25 = self._bm25_score_page(list(q_tokens), page.page_id)
-                score = 0.15 * vec_score + 0.25 * lexical_score + 0.60 * bm25
-            q_plain = rewritten_query.strip()
-            if q_plain and q_plain in (page.content or ""):
-                score += 0.35
-            scored.append(RetrievalHit(page_id=page.page_id, score=score))
-
-        scored.sort(key=lambda x: x.score, reverse=True)
+        scored = self._fuse_ranked_hits(ranked_lists)
+        scored = self._apply_doc_diversity(scored, SETTINGS.retrieval_diversity_per_doc)
         if self.rerank_client.enabled and scored:
             try:
                 rerank_candidates = []
@@ -432,6 +552,14 @@ class PageRetriever:
                         scope.set_tag("component", "retriever")
                         scope.set_tag("phase", "colpali_rerank")
                         sentry_sdk.capture_exception(exc)
+        self.last_diagnostics = {
+            "query_variants": str(len(query_variants)),
+            "variants": " | ".join(query_variants),
+            "doc_type": inferred_doc_type or "",
+            "fusion": "rrf" if len(query_variants) > 1 else "single",
+            "diversity_per_doc": str(SETTINGS.retrieval_diversity_per_doc),
+            "bm25_fallback": str(use_bm25).lower(),
+        }
         return rewritten_query, scored[:topk]
 
     def get_page(self, page_id: str) -> Page:

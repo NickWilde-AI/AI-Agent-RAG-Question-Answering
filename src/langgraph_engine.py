@@ -34,6 +34,7 @@ class QAState(TypedDict, total=False):
     answer: str
     verified: bool
     retry_hits: Optional[List[RetrievalHit]]
+    retry_query: str
     fallback_triggered: bool
     retry_reason: str
     source_files: List[str]
@@ -175,10 +176,55 @@ class LangGraphQAEngine:
             StageTrace(
                 stage="retrieve",
                 elapsed_ms=retrieval_cost,
-                detail={"topk": str(state["effective_topk"]), "hit_count": str(len(hits))},
+                detail={
+                    "topk": str(state["effective_topk"]),
+                    "hit_count": str(len(hits)),
+                    **self.retriever.last_diagnostics,
+                },
             )
         )
         low_conf = self._base._is_low_confidence(hits)
+        if low_conf and SETTINGS.enable_agentic_retry_refine:
+            low_conf_answer = "材料中未找到足够依据来回答该问题。"
+            low_conf_evidence = self._base._evidence_pages_for_verify(state["route_branch"], hits)
+            critique = self._base._critique_retrieval(
+                query=state["query"],
+                branch=state["route_branch"],
+                answer=low_conf_answer,
+                hits=hits,
+                evidence_pages=low_conf_evidence,
+            )
+            retry_query = self._base._refined_retry_query(
+                query=state["query"],
+                branch=state["route_branch"],
+                critique=critique,
+            )
+            traces.append(
+                StageTrace(
+                    stage="agentic_critique",
+                    elapsed_ms=0,
+                    detail={**critique, "retry_query": retry_query},
+                )
+            )
+            retry_topk = self._base._resolve_retry_topk(state["effective_topk"])
+            tr = time.perf_counter()
+            retry_rewritten_query, retry_hits = self.retriever.retrieve(query=retry_query, topk=retry_topk)
+            traces.append(
+                StageTrace(
+                    stage="retry_retrieve",
+                    elapsed_ms=int((time.perf_counter() - tr) * 1000),
+                    detail={
+                        "retry_topk": str(retry_topk),
+                        "retry_hit_count": str(len(retry_hits)),
+                        "retry_query": retry_query,
+                        **self.retriever.last_diagnostics,
+                    },
+                )
+            )
+            if not self._base._is_low_confidence(retry_hits):
+                rewritten_query = retry_rewritten_query
+                hits = retry_hits
+                low_conf = False
         if low_conf:
             answer = (
                 "材料中未找到足够依据来回答该问题。"
@@ -254,6 +300,27 @@ class LangGraphQAEngine:
         retry_reason = "verifier_failed"
         retry_branch = state["branch"]
         fallback_triggered = False
+        evidence_pages = self._base._evidence_pages_for_verify(state["branch"], state["hits"])
+        critique = self._base._critique_retrieval(
+            query=state["query"],
+            branch=state["branch"],
+            answer=state["answer"],
+            hits=state["hits"],
+            evidence_pages=evidence_pages,
+        )
+        retry_query = (
+            self._base._refined_retry_query(query=state["query"], branch=state["branch"], critique=critique)
+            if SETTINGS.enable_agentic_retry_refine
+            else state["query"]
+        )
+        traces = list(state.get("stage_traces", []))
+        traces.append(
+            StageTrace(
+                stage="agentic_critique",
+                elapsed_ms=0,
+                detail={**critique, "retry_query": retry_query},
+            )
+        )
         if SETTINGS.enable_branch_fallback:
             retry_branch = self.router.fallback_branch(state["branch"])
             if retry_branch != state["branch"]:
@@ -265,19 +332,27 @@ class LangGraphQAEngine:
             "fallback_triggered": fallback_triggered,
             "branch": retry_branch,
             "effective_topk": retry_topk,
+            "retry_query": retry_query,
+            "stage_traces": traces,
         }
 
     def _retry_retrieve(self, state: QAState) -> QAState:
         import time
 
         tr = time.perf_counter()
-        _, retry_hits = self.retriever.retrieve(query=state["query"], topk=state["effective_topk"])
+        retry_query = state.get("retry_query") or state["query"]
+        _, retry_hits = self.retriever.retrieve(query=retry_query, topk=state["effective_topk"])
         traces = list(state.get("stage_traces", []))
         traces.append(
             StageTrace(
                 stage="retry_retrieve",
                 elapsed_ms=int((time.perf_counter() - tr) * 1000),
-                detail={"retry_topk": str(state["effective_topk"]), "retry_hit_count": str(len(retry_hits))},
+                detail={
+                    "retry_topk": str(state["effective_topk"]),
+                    "retry_hit_count": str(len(retry_hits)),
+                    "retry_query": retry_query,
+                    **self.retriever.last_diagnostics,
+                },
             )
         )
         return {"retry_hits": retry_hits, "stage_traces": traces}
@@ -328,6 +403,7 @@ class LangGraphQAEngine:
             "answer": "",
             "verified": False,
             "retry_hits": None,
+            "retry_query": query,
             "fallback_triggered": False,
             "retry_reason": "",
             "source_files": [],
@@ -362,4 +438,3 @@ class LangGraphQAEngine:
         )
         self.memory.add_record(result, session_id=session_id)
         return result
-
