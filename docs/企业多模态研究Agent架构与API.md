@@ -36,8 +36,13 @@ curl -s -X POST http://127.0.0.1:8000/workspaces -H 'Content-Type: application/j
 curl -s -X POST http://127.0.0.1:8000/research/jobs -H 'Content-Type: application/json' \
   -d '{"workspace_id":"<workspace_id>","objective":"对比关键指标并识别风险"}'
 curl -s http://127.0.0.1:8000/research/jobs/<job_id>
+curl -N http://127.0.0.1:8000/research/jobs/<job_id>/events
 curl -OJ http://127.0.0.1:8000/research/jobs/<job_id>/report.md
 ```
+
+事件流是标准 `text/event-stream`，每条事件包含递增序号、阶段、说明、进度和结构化 detail；客户端可携带 `Last-Event-ID` 从断点继续。它用于展示可验证的计划、工具调用、检索数量和校验结论，不输出模型内部思维链。
+
+匿名会话由浏览器首次访问时生成随机 `client_id` 并保存在 `localStorage`。对话与消息写入 SQLite，通过 `/conversations` 和 `/conversations/{id}/messages` 管理；无需注册，但清除浏览器站点数据后会失去该匿名标识，跨设备同步仍需接入 SSO。
 
 上传资料使用 `multipart/form-data` 字段 `file`：
 

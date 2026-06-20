@@ -62,6 +62,8 @@ flowchart LR
 | **服务化** | FastAPI：`/ask`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
 | **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
 | **研究工作台** | Workspace 资料隔离、ResearchJob 计划/进度/取消、Evidence、Markdown/HTML 报告；SQLite 默认真源 |
+| **执行过程** | ResearchJob 通过 SSE 实时推送规划、检索、校验与报告事件，前端以时间线展示 |
+| **匿名会话** | 自动生成匿名客户端 ID，SQLite 持久化多对话与历史消息；无需注册即可新建、切换和删除对话 |
 | **安全边界** | 上传白名单/大小限制/路径隔离、文档提示词注入防护、HTML 转义+CSP、资料目录默认不进入 Git/Docker context |
 | **可靠性** | 原子幂等提交、取消竞态保护、任务/工具超时、有界 dispatcher、workspace 引擎缓存失效、重启中断状态修复 |
 
@@ -155,6 +157,8 @@ bash scripts/one_click_demo.sh --status    # 查看状态
 bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
 ```
 
+依赖清单和 Python 版本未变化时会跳过重复 pip 安装；需要修复环境时可执行 `RAG_FORCE_INSTALL=1 bash scripts/one_click_demo.sh`。
+
 公网隧道默认关闭；确需临时分享时使用 `RAG_ENABLE_PUBLIC_TUNNEL=1 bash scripts/one_click_demo.sh`。
 
 | 模式 | 命令 | 说明 |
@@ -241,6 +245,17 @@ python scripts/build_index_incremental.py \
   --lang zh
 ```
 
+轻量问答只需要文本索引时可跳过 PDF 页图渲染：
+
+```bash
+python scripts/build_index_incremental.py \
+  --input-dir user_docs --output-pages data/user_pages.json \
+  --manifest data/index_manifest.json --image-dir kb_pages \
+  --skip-page-images --clean-removed
+```
+
+一键脚本的轻量模式默认启用该优化；全量多模态模式保留页图。可用 `RAG_BUILD_PAGE_IMAGES=1` 强制生成页图，或用 `RAG_BUILD_DPI=144` 调整 DPI。增量状态使用相对路径并逐文件 checkpoint，仓库移动或中途退出后也能正确续跑。
+
 重启 API 后即可检索新索引。
 
 **文档清单**（按类型列出文件名，便于核对入库资料）：
@@ -277,6 +292,8 @@ bash scripts/one_click_demo.sh
 | `GET` | `/eval/last` | 读取最近一次评测报告 JSON |
 | `POST/GET/DELETE` | `/workspaces...` | 研究空间与资料管理 |
 | `POST/GET` | `/research/jobs...` | 提交、轮询、取消研究任务并获取报告 |
+| `GET` | `/research/jobs/{job_id}/events` | SSE 执行事件流，支持 `Last-Event-ID` 断线续传 |
+| `POST/GET/DELETE` | `/conversations...` | 匿名客户端多对话及历史消息 |
 
 研究架构、完整 API 示例、无 GPU 运行方式与生产部署说明见 [`docs/企业多模态研究Agent架构与API.md`](docs/企业多模态研究Agent架构与API.md)。
 
@@ -294,12 +311,22 @@ bash scripts/one_click_demo.sh
 | `bash scripts/drill_rate_limit.sh` | 限流演练：统计 200/429 比例 |
 | `bash scripts/drill_incident_replay.sh` | 故障演练：质量失败样本自动回放 |
 | `bash scripts/run_ocr_vs_visual_eval.sh` | 一键产出视觉链路 vs OCR 基线对照报告 |
+| `python scripts/load_test.py --mode mixed --stages 10:10,50:20,100:30` | 分阶段并发压测，输出 P50/P95/P99、RPS、错误与报告 |
 
 提测示例（先 `bash scripts/one_click_demo.sh`）：
 
 ```bash
 python scripts/stage3_test_gate.py --base http://127.0.0.1:8000
 ```
+
+快速压测健康接口与完整问答：
+
+```bash
+python scripts/load_test.py --mode status --stages 10:10,100:20,500:30
+python scripts/load_test.py --mode ask --stages 10:30,50:60,100:60 --think-time 0.5
+```
+
+JSON/Markdown 报告写入 `reports/load/`。生产容量应逐级升压，并同时观察 API、模型服务、向量库、Redis 和网关指标。
 
 ---
 
@@ -319,7 +346,7 @@ python -m pytest -q
 python -m compileall -q src offer_agent scripts main.py
 ```
 
-测试覆盖即时问答兼容、Workspace 隔离、上传校验、Tool Registry、规则 Planner、LangGraph 闲聊分支、任务状态/取消竞态、并发幂等、工具超时、安全报告和完整研究 API 闭环。
+测试覆盖即时问答兼容、Workspace 隔离、上传校验、Tool Registry、规则 Planner、LangGraph 闲聊分支、任务状态/取消竞态、并发幂等、工具超时、安全报告、SSE 事件、匿名会话、增量建库和完整研究 API 闭环。
 
 ---
 

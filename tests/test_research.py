@@ -159,3 +159,48 @@ def test_workspace_delete_rejected_with_active_job(tmp_path):
         assert response.status_code == 409 and response.json()["detail"]["code"] == "workspace_busy"
     finally:
         api.research_repository,api.research_executor.repo=old_repo,old_executor
+
+
+def test_anonymous_conversation_history_is_isolated(tmp_path):
+    repo=SQLiteResearchRepository(str(tmp_path/"conversation.db"))
+    conversation=repo.create_conversation("client-aaaaaaaa",None,"新对话")
+    cid=conversation["conversation_id"]
+    repo.add_message(cid,"user","这是第一条问题",{"topk":3})
+    repo.add_message(cid,"assistant","这是回答",{"verified":True})
+    assert repo.list_conversations("client-aaaaaaaa")[0]["title"] == "这是第一条问题"
+    assert [x["role"] for x in repo.list_messages(cid,"client-aaaaaaaa")] == ["user","assistant"]
+    assert repo.list_messages(cid,"client-bbbbbbbb") is None
+    assert not repo.delete_conversation(cid,"client-bbbbbbbb")
+    assert repo.delete_conversation(cid,"client-aaaaaaaa")
+
+
+def test_api_conversation_and_sse_events(tmp_path):
+    import src.api as api
+    old_repo,old_executor=api.research_repository,api.research_executor.repo
+    repo=SQLiteResearchRepository(str(tmp_path/"events.db")); api.research_repository=repo; api.research_executor.repo=repo
+    try:
+        client=TestClient(api.app)
+        created=client.post("/conversations",json={"client_id":"client-aaaaaaaa","title":"新对话"})
+        assert created.status_code == 201; cid=created.json()["conversation_id"]
+        asked=client.post("/ask",json={"query":"产品线最高销售额是多少","client_id":"client-aaaaaaaa","conversation_id":cid,"session_id":cid})
+        assert asked.status_code == 200 and asked.json()["conversation_id"] == cid
+        messages=client.get(f"/conversations/{cid}/messages?client_id=client-aaaaaaaa")
+        assert [x["role"] for x in messages.json()] == ["user","assistant"]
+        assert client.get(f"/conversations/{cid}/messages?client_id=client-bbbbbbbb").status_code == 404
+
+        ws=client.post("/workspaces",json={"name":"SSE","use_demo":True}).json()
+        submitted=client.post("/research/jobs",json={"workspace_id":ws["workspace_id"],"objective":"归纳资料中的核心结论并提供证据"})
+        jid=submitted.json()["job_id"]
+        for _ in range(200):
+            job=client.get(f"/research/jobs/{jid}").json()
+            if job["status"] in {"completed","failed","cancelled"}: break
+            time.sleep(.02)
+        assert job["status"] == "completed", job
+        stream=client.get(f"/research/jobs/{jid}/events")
+        assert stream.status_code == 200
+        assert "event: job_created" in stream.text
+        assert "event: plan_created" in stream.text
+        assert "event: job_completed" in stream.text
+        assert stream.headers["content-type"].startswith("text/event-stream")
+    finally:
+        api.research_repository,api.research_executor.repo=old_repo,old_executor

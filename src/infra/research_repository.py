@@ -39,6 +39,12 @@ class SQLiteResearchRepository(ResearchRepository):
             CREATE TABLE IF NOT EXISTS pages(page_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,document_id TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL,idempotency_key TEXT,created_at TEXT NOT NULL,UNIQUE(workspace_id,idempotency_key),FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY,job_id TEXT UNIQUE NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS research_events(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,sequence_no INTEGER NOT NULL,event_type TEXT NOT NULL,stage TEXT NOT NULL,message TEXT NOT NULL,progress INTEGER NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(job_id,sequence_no),FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE);
+            CREATE INDEX IF NOT EXISTS idx_research_events_job_seq ON research_events(job_id,sequence_no);
+            CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,client_id TEXT NOT NULL,workspace_id TEXT,title TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL);
+            CREATE INDEX IF NOT EXISTS idx_conversations_client_updated ON conversations(client_id,updated_at DESC);
+            CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);
+            CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_created ON conversation_messages(conversation_id,created_at);
             """)
             c.execute("UPDATE jobs SET status='pending', payload=json_set(payload,'$.status','pending','$.error_message','interrupted by service restart') WHERE status IN ('planning','running','verifying')")
 
@@ -136,3 +142,51 @@ class SQLiteResearchRepository(ResearchRepository):
     def get_report(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as c:r=c.execute("SELECT payload FROM reports WHERE job_id=?",(job_id,)).fetchone()
         return json.loads(r[0]) if r else None
+
+    def append_event(self, job_id: str, event_type: str, stage: str, message: str, progress: int, detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        import uuid
+        with self._lock, self._connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            row=c.execute("SELECT COALESCE(MAX(sequence_no),0)+1 FROM research_events WHERE job_id=?",(job_id,)).fetchone()
+            seq=int(row[0]); event_id=uuid.uuid4().hex; created=utc_now(); detail_payload=detail or {}
+            c.execute("INSERT INTO research_events VALUES(?,?,?,?,?,?,?,?,?)",(event_id,job_id,seq,event_type,stage,message,max(0,min(100,progress)),json.dumps(detail_payload,ensure_ascii=False),created))
+        return {"event_id":event_id,"job_id":job_id,"sequence_no":seq,"event_type":event_type,"stage":stage,"message":message,"progress":max(0,min(100,progress)),"detail":detail_payload,"created_at":created}
+
+    def list_events(self, job_id: str, after_sequence: int = 0, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._connect() as c: rows=c.execute("SELECT * FROM research_events WHERE job_id=? AND sequence_no>? ORDER BY sequence_no LIMIT ?",(job_id,max(0,after_sequence),max(1,min(limit,1000)))).fetchall()
+        return [{"event_id":r["id"],"job_id":r["job_id"],"sequence_no":r["sequence_no"],"event_type":r["event_type"],"stage":r["stage"],"message":r["message"],"progress":r["progress"],"detail":json.loads(r["detail"]),"created_at":r["created_at"]} for r in rows]
+
+    def create_conversation(self, client_id: str, workspace_id: Optional[str], title: str = "新对话") -> Dict[str, Any]:
+        import uuid
+        cid=uuid.uuid4().hex; now=utc_now()
+        with self._connect() as c: c.execute("INSERT INTO conversations VALUES(?,?,?,?,?,?)",(cid,client_id,workspace_id,title,now,now))
+        return {"conversation_id":cid,"client_id":client_id,"workspace_id":workspace_id,"title":title,"created_at":now,"updated_at":now,"message_count":0}
+
+    def list_conversations(self, client_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._connect() as c: rows=c.execute("""SELECT c.*,COUNT(m.id) message_count FROM conversations c LEFT JOIN conversation_messages m ON m.conversation_id=c.id WHERE c.client_id=? GROUP BY c.id ORDER BY c.updated_at DESC LIMIT ?""",(client_id,max(1,min(limit,200)))).fetchall()
+        return [{"conversation_id":r["id"],"client_id":r["client_id"],"workspace_id":r["workspace_id"],"title":r["title"],"created_at":r["created_at"],"updated_at":r["updated_at"],"message_count":r["message_count"]} for r in rows]
+
+    def get_conversation(self, conversation_id: str, client_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as c: r=c.execute("SELECT * FROM conversations WHERE id=? AND client_id=?",(conversation_id,client_id)).fetchone()
+        return {"conversation_id":r["id"],"client_id":r["client_id"],"workspace_id":r["workspace_id"],"title":r["title"],"created_at":r["created_at"],"updated_at":r["updated_at"]} if r else None
+
+    def add_message(self, conversation_id: str, role: str, content: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        import uuid
+        mid=uuid.uuid4().hex; now=utc_now()
+        with self._connect() as c:
+            c.execute("INSERT INTO conversation_messages VALUES(?,?,?,?,?,?)",(mid,conversation_id,role,content,json.dumps(payload or {},ensure_ascii=False),now))
+            count=c.execute("SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?",(conversation_id,)).fetchone()[0]
+            if role=="user" and count<=1:
+                title=" ".join(content.split())[:40] or "新对话"
+                c.execute("UPDATE conversations SET title=?,updated_at=? WHERE id=?",(title,now,conversation_id))
+            else: c.execute("UPDATE conversations SET updated_at=? WHERE id=?",(now,conversation_id))
+        return {"message_id":mid,"conversation_id":conversation_id,"role":role,"content":content,"payload":payload or {},"created_at":now}
+
+    def list_messages(self, conversation_id: str, client_id: str, limit: int = 200) -> Optional[List[Dict[str, Any]]]:
+        if not self.get_conversation(conversation_id,client_id): return None
+        with self._connect() as c: rows=c.execute("SELECT * FROM conversation_messages WHERE conversation_id=? ORDER BY created_at LIMIT ?",(conversation_id,max(1,min(limit,500)))).fetchall()
+        return [{"message_id":r["id"],"conversation_id":r["conversation_id"],"role":r["role"],"content":r["content"],"payload":json.loads(r["payload"]),"created_at":r["created_at"]} for r in rows]
+
+    def delete_conversation(self, conversation_id: str, client_id: str) -> bool:
+        with self._connect() as c: cur=c.execute("DELETE FROM conversations WHERE id=? AND client_id=?",(conversation_id,client_id))
+        return cur.rowcount>0

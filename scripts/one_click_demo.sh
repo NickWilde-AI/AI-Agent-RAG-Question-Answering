@@ -104,15 +104,33 @@ fi
 export VIRTUAL_ENV="$PWD/$VENV_DIR"
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 PYTHON="$VENV_DIR/bin/python"
-"$PYTHON" -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
-"$PYTHON" -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
-"$PYTHON" -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
+DEPS_MARKER="$VENV_DIR/.rag-deps.sha256"
+DEPS_HASH="$("$PYTHON" - "$RAG_LITE_MODE" <<'PY'
+import hashlib, pathlib, sys
+files=[pathlib.Path("requirements.txt")]
+if sys.argv[1] == "0": files.append(pathlib.Path("requirements/colpali.txt"))
+h=hashlib.sha256()
+for path in files: h.update(path.read_bytes())
+h.update(sys.version.encode())
+print(h.hexdigest())
+PY
+)"
+INSTALLED_HASH="$(test -f "$DEPS_MARKER" && tr -dc 'a-f0-9' < "$DEPS_MARKER" || true)"
+if [ "${RAG_FORCE_INSTALL:-0}" = "1" ] || [ "$DEPS_HASH" != "$INSTALLED_HASH" ]; then
+  echo "依赖首次安装或清单已变化，正在同步..."
+  "$PYTHON" -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
+  "$PYTHON" -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+  "$PYTHON" -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
+  if [ "${RAG_LITE_MODE}" = "0" ]; then
+    "$PYTHON" -m pip install -r requirements/colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+  fi
+  printf '%s\n' "$DEPS_HASH" > "$DEPS_MARKER"
+else
+  echo "依赖清单未变化，跳过 pip 安装（强制安装请设 RAG_FORCE_INSTALL=1）"
+fi
 if ! "$PYTHON" -c 'import fastapi, multipart, uvicorn' >/dev/null 2>&1; then
   echo "依赖安装不完整（需要 fastapi/python-multipart/uvicorn），请查看上方 pip 输出。" >&2
   exit 1
-fi
-if [ "${RAG_LITE_MODE}" = "0" ]; then
-  "$PYTHON" -m pip install -r requirements/colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
 fi
 
 if [ "${RAG_LITE_MODE}" != "0" ]; then
@@ -155,10 +173,13 @@ fi
 # 可选变量：.env 未声明时给默认值，避免 set -u 与后续命令报错
 RAG_BUILD_DPI="${RAG_BUILD_DPI:-144}"
 RAG_SKIP_INDEX_BUILD="${RAG_SKIP_INDEX_BUILD:-0}"
+RAG_BUILD_PAGE_IMAGES="${RAG_BUILD_PAGE_IMAGES:-$([ "$RAG_LITE_MODE" = "0" ] && echo 1 || echo 0)}"
 
 mkdir -p user_docs kb_pages data
 
 run_index_build() {
+  image_args=()
+  if [ "$RAG_BUILD_PAGE_IMAGES" != "1" ]; then image_args+=(--skip-page-images); fi
   "$PYTHON" scripts/build_index_incremental.py \
     --input-dir user_docs \
     --output-pages data/user_pages.json \
@@ -166,7 +187,8 @@ run_index_build() {
     --image-dir kb_pages \
     --lang zh \
     --dpi "${RAG_BUILD_DPI:-144}" \
-    --clean-removed
+    --clean-removed \
+    "${image_args[@]}"
 }
 
 count_user_docs() {

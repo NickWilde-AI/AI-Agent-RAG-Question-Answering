@@ -181,6 +181,10 @@ class ResearchExecutor:
     def _timed_out(self, started: float) -> bool:
         return time.perf_counter()-started >= max(1.0, SETTINGS.research_job_timeout_seconds)
 
+    def _emit(self, job_id: str, event_type: str, stage: str, message: str, progress: int, detail: Dict[str, Any] | None = None) -> None:
+        try: self.repo.append_event(job_id,event_type,stage,message,progress,detail)
+        except Exception: logger.exception("failed to persist research event job=%s type=%s",job_id,event_type)
+
     def execute(self, job_id: str) -> None:
         job_started=time.perf_counter()
         job=self.repo.get_job(job_id)
@@ -188,11 +192,13 @@ class ResearchExecutor:
         try:
             job.update(status="planning",progress=5,started_at=utc_now())
             if not self.repo.save_job(job): return
+            self._emit(job_id,"planning_started","planning","正在分析研究目标并生成计划",5)
             RESEARCH_JOBS.labels(status="planning").inc()
             engine=self.build_workspace_engine(job["workspace_id"])
             documents=self.repo.list_documents(job["workspace_id"])
             steps=ResearchPlanner(getattr(engine.router,"llm_client",None)).plan(job["objective"],documents); job["plan"]=[to_dict(s) for s in steps]; job.update(status="running",progress=10)
             if not self.repo.save_job(job): return
+            self._emit(job_id,"plan_created","planning",f"已生成 {len(steps)} 个研究步骤",10,{"step_count":len(steps),"tools":[s.tool_name for s in steps]})
             RESEARCH_JOBS.labels(status="running").inc()
             registry=ToolRegistry(engine)
             for i,step in enumerate(steps):
@@ -201,6 +207,7 @@ class ResearchExecutor:
                 if fresh and fresh["status"]=="cancelled": return
                 step.status="running"; job["current_step"]=step.step_id; job["plan"]=[to_dict(s) for s in steps]
                 if not self.repo.save_job(job): return
+                self._emit(job_id,"step_started","running",f"开始：{step.title}",job["progress"],{"step_id":step.step_id,"tool":step.tool_name,"query":step.query[:300]})
                 try:
                     context="\n".join(str(f.get("answer", "")) for f in job["findings"][-3:])[:2000]
                     step_query=step.query+(f"\n已验证阶段结论（仅供上下文）：{context}" if context else "")
@@ -210,16 +217,21 @@ class ResearchExecutor:
                     step.trace=[{"tool":step.tool_name,"elapsed_ms":run["elapsed_ms"],"hit_count":len(result.hits),"verified":step.verified,"retry_reason":result.trace.retry_reason if result.trace else ""}]
                     step.status="completed" if step.verified else "failed"
                     RESEARCH_STEPS.labels(tool=step.tool_name,status=step.status).inc()
+                    self._emit(job_id,"retrieval_completed","retrieve",f"检索到 {len(result.hits)} 个候选页面",job["progress"],{"step_id":step.step_id,"hit_count":len(result.hits),"documents":result.source_files[:10]})
+                    self._emit(job_id,"verification_passed" if step.verified else "verification_failed","verify","证据校验通过" if step.verified else "证据校验未通过",job["progress"],{"step_id":step.step_id,"verified":step.verified,"evidence_count":len(step.evidence)})
                     if step.verified and step.evidence: job["findings"].append({"title":step.title,"answer":step.answer,"verified":True,"evidence":[asdict(e) for e in step.evidence]})
                 except Exception as exc:
                     step.status="failed"; step.error_message=str(exc); RESEARCH_STEPS.labels(tool=step.tool_name,status="failed").inc(); logger.warning("research step failed: %s",exc)
+                    self._emit(job_id,"step_failed","running",f"步骤失败：{step.title}",job["progress"],{"step_id":step.step_id,"tool":step.tool_name,"error":str(exc)[:300]})
                 fresh=self.repo.get_job(job_id)
                 if fresh and fresh["status"]=="cancelled": return
                 job["progress"]=10+int(70*(i+1)/len(steps)); job["plan"]=[to_dict(s) for s in steps]
                 if not self.repo.save_job(job): return
+                self._emit(job_id,"step_completed","running",f"完成：{step.title}",job["progress"],{"step_id":step.step_id,"status":step.status,"verified":step.verified})
             if self._timed_out(job_started): raise TimeoutError("research job exceeded total timeout")
             job.update(status="verifying",progress=85,current_step="report")
             if not self.repo.save_job(job): return
+            self._emit(job_id,"report_started","report","正在汇总已验证结论并生成报告",85)
             RESEARCH_JOBS.labels(status="verifying").inc()
             try:
                 report=ReportGenerator().generate(job,self.repo.list_documents(job["workspace_id"])); self.repo.save_report(to_dict(report))
@@ -228,10 +240,13 @@ class ResearchExecutor:
                 REPORT_GENERATION.labels(status="failed").inc()
                 raise
             job.update(status="completed",progress=100,report_id=report.report_id,finished_at=utc_now(),current_step="")
-            if self.repo.save_job(job): RESEARCH_JOBS.labels(status="completed").inc()
+            if self.repo.save_job(job):
+                RESEARCH_JOBS.labels(status="completed").inc()
+                self._emit(job_id,"job_completed","completed","研究完成，报告已生成",100,{"report_id":report.report_id,"citation_count":len(report.citations)})
         except Exception as exc:
             job.update(status="failed",error_message=str(exc),finished_at=utc_now()); self.repo.save_job(job); logger.exception("research job failed")
             RESEARCH_JOBS.labels(status="failed").inc()
+            self._emit(job_id,"job_failed","failed","研究任务执行失败",job.get("progress",0),{"error":str(exc)[:300]})
         finally: RESEARCH_JOB_DURATION.observe(time.perf_counter()-job_started)
 
 

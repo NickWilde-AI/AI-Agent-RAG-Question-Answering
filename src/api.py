@@ -30,15 +30,17 @@ api.py — HTTP 入口（FastAPI）：把浏览器 / curl 请求转给编排引�
 from __future__ import annotations
 
 from datetime import datetime
+import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, Response, StreamingResponse
 import sentry_sdk
 
 from .agent_loop import PlanExecuteAgentLoop
@@ -105,6 +107,8 @@ class AskRequest(BaseModel):
     session_id: str = Field(default="default", min_length=1, max_length=128, description="会话 ID")
     topk: Optional[int] = Field(default=None, ge=1, le=20, description="可选 top-k")
     workspace_id: Optional[str] = Field(default=None, description="可选研究空间；传入后严格限制资料范围")
+    client_id: Optional[str] = Field(default=None, min_length=8, max_length=128, description="匿名浏览器客户端 ID")
+    conversation_id: Optional[str] = Field(default=None, min_length=8, max_length=128, description="持久对话 ID")
 
 
 class WorkspaceCreateRequest(BaseModel):
@@ -134,6 +138,13 @@ class AskResponse(BaseModel):
     cost_ms: int
     source_files: List[str] = Field(default_factory=list, description="本次回答依据的源文件完整文件名（去重）")
     citations: List[Dict[str, Any]] = Field(default_factory=list, description="本次回答依据的页级证据片段")
+    conversation_id: Optional[str] = None
+
+
+class ConversationCreateRequest(BaseModel):
+    client_id: str = Field(...,min_length=8,max_length=128)
+    workspace_id: Optional[str] = None
+    title: str = Field(default="新对话",max_length=80)
 
 
 class EvalRunRequest(BaseModel):
@@ -191,6 +202,8 @@ def capabilities() -> Dict[str, Any]:
         "session_cache": SETTINGS.enable_session_cache,
         "workspace": True,
         "research_jobs": True,
+        "research_sse_events": True,
+        "anonymous_conversations": True,
         "report_generation": True,
         "job_backend": "in_process_thread_pool",
         "agentic_query_expansion": SETTINGS.enable_query_expansion,
@@ -243,6 +256,31 @@ def get_workspace(workspace_id: str) -> Dict[str, Any]:
     ws=research_repository.get_workspace(workspace_id)
     if not ws: raise _not_found("workspace")
     ws["documents"]=research_repository.list_documents(workspace_id); return ws
+
+
+@app.post("/conversations",status_code=201)
+def create_conversation(req: ConversationCreateRequest) -> Dict[str, Any]:
+    if req.workspace_id and not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
+    return research_repository.create_conversation(req.client_id,req.workspace_id,req.title.strip() or "新对话")
+
+
+@app.get("/conversations")
+def list_conversations(client_id: str,limit: int = 100) -> List[Dict[str, Any]]:
+    if not 8<=len(client_id)<=128: raise HTTPException(400,detail={"code":"invalid_client_id","message":"client_id length must be 8..128"})
+    return research_repository.list_conversations(client_id,limit)
+
+
+@app.get("/conversations/{conversation_id}/messages")
+def list_conversation_messages(conversation_id: str,client_id: str,limit: int = 200) -> List[Dict[str, Any]]:
+    messages=research_repository.list_messages(conversation_id,client_id,limit)
+    if messages is None: raise _not_found("conversation")
+    return messages
+
+
+@app.delete("/conversations/{conversation_id}",status_code=204)
+def delete_conversation(conversation_id: str,client_id: str) -> Response:
+    if not research_repository.delete_conversation(conversation_id,client_id): raise _not_found("conversation")
+    return Response(status_code=204)
 
 
 @app.delete("/workspaces/{workspace_id}", status_code=204)
@@ -320,6 +358,7 @@ def submit_research(req: ResearchJobRequest) -> Dict[str, Any]:
     job=ResearchJob(job_id=uuid.uuid4().hex,workspace_id=req.workspace_id,session_id=req.session_id,objective=req.objective.strip(),idempotency_key=req.idempotency_key)
     payload,created=research_repository.create_job(to_dict(job))
     if not created: return payload
+    research_repository.append_event(job.job_id,"job_created","pending","研究任务已进入队列",0,{"objective":job.objective[:300]})
     if not research_dispatcher.submit(job.job_id):
         payload.update(status="failed",error_message="research dispatcher queue is full",finished_at=utc_now())
         research_repository.save_job(payload)
@@ -334,11 +373,37 @@ def get_research_job(job_id: str) -> Dict[str, Any]:
     return job
 
 
+@app.get("/research/jobs/{job_id}/events")
+async def stream_research_events(job_id: str,request: Request,after: int = 0) -> StreamingResponse:
+    if not research_repository.get_job(job_id): raise _not_found("research_job")
+    last_header=request.headers.get("last-event-id","")
+    cursor=max(after,int(last_header) if last_header.isdigit() else 0)
+    async def generate():
+        nonlocal cursor
+        idle=0
+        while True:
+            if await request.is_disconnected(): break
+            events=research_repository.list_events(job_id,cursor,200)
+            if events:
+                idle=0
+                for event in events:
+                    cursor=event["sequence_no"]
+                    yield f"id: {cursor}\nevent: {event['event_type']}\ndata: {json.dumps(event,ensure_ascii=False)}\n\n"
+            else:
+                idle+=1
+                job=research_repository.get_job(job_id)
+                if job and job["status"] in {"completed","failed","cancelled"} and idle>=2: break
+                if idle%15==0: yield ": keep-alive\n\n"
+            await asyncio.sleep(.35)
+    return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","Connection":"keep-alive"})
+
+
 @app.post("/research/jobs/{job_id}/cancel")
 def cancel_research_job(job_id: str) -> Dict[str, Any]:
     if not research_repository.get_job(job_id): raise _not_found("research_job")
     if not research_repository.request_cancel(job_id): raise HTTPException(409,detail={"code":"state_conflict","message":"job can no longer be cancelled"})
     RESEARCH_JOBS.labels(status="cancelled").inc()
+    research_repository.append_event(job_id,"job_cancelled","cancelled","研究任务已取消",research_repository.get_job(job_id).get("progress",0))
     return research_repository.get_job(job_id) or {}
 
 
@@ -435,10 +500,19 @@ def ask(req: AskRequest) -> AskResponse:
     loop_steps: Optional[List[Dict[str, Any]]] = None
     sid = req.session_id
     response_engine = engine
+    conversation=None
+    if req.conversation_id:
+        if not req.client_id: raise HTTPException(400,detail={"code":"client_id_required","message":"client_id is required with conversation_id"})
+        conversation=research_repository.get_conversation(req.conversation_id,req.client_id)
+        if not conversation: raise _not_found("conversation")
+        if conversation.get("workspace_id") and req.workspace_id and conversation["workspace_id"]!=req.workspace_id:
+            raise HTTPException(409,detail={"code":"workspace_conflict","message":"conversation belongs to another workspace"})
+        research_repository.add_message(req.conversation_id,"user",req.query,{"topk":req.topk,"workspace_id":req.workspace_id})
+    effective_workspace=req.workspace_id or (conversation.get("workspace_id") if conversation else None)
     try:
-        if req.workspace_id:
-            if not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
-            scoped_engine=research_executor.build_workspace_engine(req.workspace_id)
+        if effective_workspace:
+            if not research_repository.get_workspace(effective_workspace): raise _not_found("workspace")
+            scoped_engine=research_executor.build_workspace_engine(effective_workspace)
             response_engine=scoped_engine
             result=scoped_engine.ask(req.query,topk=req.topk or SETTINGS.topk_default,session_id=sid)
         elif SETTINGS.enable_plan_execute_loop:
@@ -496,7 +570,7 @@ def ask(req: AskRequest) -> AskResponse:
             "title": title,
         }
 
-    return AskResponse(
+    response=AskResponse(
         answer=result.answer,
         branch=result.branch,
         verified=result.verified,
@@ -524,4 +598,9 @@ def ask(req: AskRequest) -> AskResponse:
         cost_ms=elapsed_ms,
         source_files=result.source_files,
         citations=result.citation_details,
+        conversation_id=req.conversation_id,
     )
+    if req.conversation_id:
+        payload = response.model_dump() if hasattr(response, "model_dump") else response.dict()
+        research_repository.add_message(req.conversation_id,"assistant",response.answer,payload)
+    return response

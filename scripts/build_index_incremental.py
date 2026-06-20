@@ -92,20 +92,38 @@ def read_json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def file_signature(file_path: Path, doc_id: str) -> Dict[str, str]:
+def file_key(file_path: Path, input_dir: Path) -> str:
+    """使用相对路径作为 manifest key，仓库移动后仍可命中。"""
+    try:
+        return str(file_path.resolve().relative_to(input_dir.resolve()))
+    except ValueError:
+        return str(file_path.resolve())
+
+
+def file_signature(file_path: Path, doc_id: str, dpi: int, render_images: bool) -> Dict[str, str]:
     stat = file_path.stat()
     return {
         "mtime": str(int(stat.st_mtime)),
         "size": str(stat.st_size),
         "doc_id": doc_id,
         "ext": file_path.suffix.lower(),
+        "dpi": str(dpi),
+        "render_images": str(render_images).lower(),
     }
 
 
-def should_reindex(file_path: Path, doc_id: str, old_manifest: Dict[str, Dict[str, str]]) -> bool:
-    key = str(file_path.resolve())
-    new_sig = file_signature(file_path, doc_id)
-    old_sig = old_manifest.get(key)
+def previous_signature(file_path: Path, input_dir: Path, old_manifest: Dict[str, Dict[str, str]], doc_id: str = ""):
+    """兼容旧版绝对路径 manifest，并迁移为相对路径。"""
+    direct=old_manifest.get(file_key(file_path,input_dir)) or old_manifest.get(str(file_path.resolve()))
+    if direct: return direct
+    if doc_id:
+        return next((sig for sig in old_manifest.values() if sig.get("doc_id")==doc_id),None)
+    return None
+
+
+def should_reindex(file_path: Path, input_dir: Path, doc_id: str, old_manifest: Dict[str, Dict[str, str]], dpi: int, render_images: bool) -> bool:
+    new_sig = file_signature(file_path,doc_id,dpi,render_images)
+    old_sig = previous_signature(file_path,input_dir,old_manifest,doc_id)
     return old_sig != new_sig
 
 
@@ -144,6 +162,7 @@ def main() -> None:
     parser.add_argument("--max-text-chars", type=int, default=4000, help="DOCX/TXT 每个文本块最大字符数")
     parser.add_argument("--max-sheet-rows", type=int, default=300, help="XLSX/CSV 每个 sheet 最多读取行数")
     parser.add_argument("--no-progress", action="store_true", help="关闭 tqdm 进度条（CI 或日志采集时用）")
+    parser.add_argument("--skip-page-images", action="store_true", help="只抽取页面文本，不渲染 PDF 页图（轻量模式显著提速）")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir).resolve()
@@ -179,8 +198,11 @@ def main() -> None:
             flush=True,
         )
         old_manifest = {}
-    active_file_keys = set(str(p.resolve()) for p in doc_files)
     new_manifest: Dict[str, Dict[str, str]] = {}
+    for existing_doc in doc_files:
+        existing_id=stable_doc_id(existing_doc,input_dir)
+        existing_sig=previous_signature(existing_doc,input_dir,old_manifest,existing_id)
+        if existing_sig: new_manifest[file_key(existing_doc,input_dir)]=existing_sig
 
     rebuilt_doc_ids: List[str] = []
     skipped_files = 0
@@ -211,10 +233,11 @@ def main() -> None:
                 name = name[:45] + "..."
             progress_bar.set_postfix_str(name, refresh=False)
 
-        key = str(document.resolve())
+        key = file_key(document,input_dir)
         doc_id = stable_doc_id(document, input_dir)
-        if not should_reindex(document, doc_id, old_manifest):
-            new_manifest[key] = file_signature(document, doc_id)
+        render_images=not args.skip_page_images
+        if not should_reindex(document,input_dir,doc_id,old_manifest,args.dpi,render_images):
+            new_manifest[key] = file_signature(document,doc_id,args.dpi,render_images)
             skipped_files += 1
             continue
 
@@ -226,7 +249,7 @@ def main() -> None:
                 doc_id=doc_id,
                 doc_type=doc_type,
                 language=args.lang,
-                image_output_dir=str(image_dir),
+                image_output_dir=str(image_dir) if render_images else None,
                 dpi=args.dpi,
                 max_text_chars=args.max_text_chars,
                 max_sheet_rows=args.max_sheet_rows,
@@ -238,24 +261,32 @@ def main() -> None:
             print(f"\n[WARN] 跳过解析失败文档: {display_path(document, Path.cwd())} -> {exc}")
             continue
 
-        old_doc_id = old_manifest.get(key, {}).get("doc_id")
+        old_sig=previous_signature(document,input_dir,old_manifest,doc_id) or {}
+        old_doc_id = old_sig.get("doc_id")
         if old_doc_id:
             doc_to_pages.pop(old_doc_id, None)
         doc_to_pages.pop(legacy_doc_id(document), None)
         doc_to_pages[doc_id] = pages
-        new_manifest[key] = file_signature(document, doc_id)
+        new_manifest[key] = file_signature(document,doc_id,args.dpi,render_images)
         rebuilt_doc_ids.append(doc_id)
+
+        # 每完成一个文件就 checkpoint；中断后无需重复解析已经完成的大文件。
+        checkpoint_pages=[]
+        for saved_pages in doc_to_pages.values(): checkpoint_pages.extend(saved_pages)
+        checkpoint_pages.sort(key=lambda p:(p.doc_id,p.page_no or 0,p.page_id))
+        pages_tmp=output_pages.with_suffix(output_pages.suffix+".tmp")
+        manifest_tmp=manifest_path.with_suffix(manifest_path.suffix+".tmp")
+        pages_tmp.write_text(json.dumps([asdict(p) for p in checkpoint_pages],ensure_ascii=False,indent=2),encoding="utf-8")
+        manifest_tmp.write_text(json.dumps({**new_manifest},ensure_ascii=False,indent=2),encoding="utf-8")
+        pages_tmp.replace(output_pages); manifest_tmp.replace(manifest_path)
 
     if tqdm_factory is not None and hasattr(progress_bar, "close"):
         progress_bar.close()
 
     if args.clean_removed:
-        old_file_keys = set(old_manifest.keys())
-        removed_keys = old_file_keys - active_file_keys
-        if removed_keys:
-            removed_doc_ids = {old_manifest.get(p, {}).get("doc_id") or stable_doc_id(Path(p), input_dir) for p in removed_keys}
-            for rid in removed_doc_ids:
-                doc_to_pages.pop(rid, None)
+        active_doc_ids={stable_doc_id(p,input_dir) for p in doc_files}
+        removed_doc_ids={sig.get("doc_id") for sig in old_manifest.values() if sig.get("doc_id") and sig.get("doc_id") not in active_doc_ids}
+        for rid in removed_doc_ids: doc_to_pages.pop(rid,None)
 
     merged_pages: List[Page] = []
     for _, pages in doc_to_pages.items():
@@ -263,14 +294,11 @@ def main() -> None:
 
     merged_pages.sort(key=lambda p: (p.doc_id, p.page_no or 0, p.page_id))
 
-    output_pages.write_text(
-        json.dumps([asdict(p) for p in merged_pages], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    manifest_path.write_text(
-        json.dumps(new_manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    pages_tmp=output_pages.with_suffix(output_pages.suffix+".tmp")
+    manifest_tmp=manifest_path.with_suffix(manifest_path.suffix+".tmp")
+    pages_tmp.write_text(json.dumps([asdict(p) for p in merged_pages],ensure_ascii=False,indent=2),encoding="utf-8")
+    manifest_tmp.write_text(json.dumps(new_manifest,ensure_ascii=False,indent=2),encoding="utf-8")
+    pages_tmp.replace(output_pages); manifest_tmp.replace(manifest_path)
 
     sep = "─" * 52
     print()

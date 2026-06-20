@@ -144,6 +144,16 @@
     .job-card { border:1px solid var(--border); border-radius:12px; margin-top:12px; padding:14px; background:#fafcff; }
     .progress { height:8px; background:#e5e7eb; border-radius:8px; overflow:hidden; }.progress>i{display:block;height:100%;background:var(--primary)}
     .evidence-item { padding:8px 0; border-top:1px dashed var(--border); font-size:13px; }
+    .conversation-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:12px 0 8px; }
+    .conversation-list { display:flex; flex-direction:column; gap:5px; max-height:250px; overflow:auto; }
+    .conversation-item { display:flex; align-items:center; gap:6px; border:1px solid transparent; border-radius:8px; padding:8px; cursor:pointer; color:#344054; }
+    .conversation-item:hover,.conversation-item.active { background:#eef4ff; border-color:#c8dafe; }
+    .conversation-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+    .conversation-delete { border:0; background:transparent; color:var(--muted); cursor:pointer; }
+    .event-timeline { margin-top:12px; border-left:2px solid #c8dafe; padding-left:12px; }
+    .event-row { position:relative; padding:5px 0 8px; font-size:13px; color:#344054; }
+    .event-row::before { content:""; position:absolute; width:8px; height:8px; border-radius:50%; background:var(--primary); left:-17px; top:10px; }
+    .event-time { color:var(--muted); font-size:11px; margin-left:6px; }
     .chip-list {
       display: flex;
       flex-wrap: wrap;
@@ -450,6 +460,8 @@
           <button class="btn-ghost" id="uploadDocumentBtn">上传资料</button>
           <div id="documentList" class="meta">选择空间后显示资料</div>
         </div>
+        <div class="conversation-head"><h3 style="margin:0">历史对话</h3><button class="btn-ghost" id="newConversationBtn">＋ 新对话</button></div>
+        <div id="conversationList" class="conversation-list"><div class="meta">暂无历史对话</div></div>
         <h3>快速提问示例</h3>
         <div class="chip-list" id="quickList">
           <button class="chip" data-q="采购申请单的采购单号是多少？">采购单号</button>
@@ -514,12 +526,12 @@
     const runEvalBtn = $("runEvalBtn");
     const loadEvalBtn = $("loadEvalBtn");
     const evalLog = $("evalLog");
-    const workspaceSelect=$("workspaceSelect"), documentList=$("documentList"), researchResult=$("researchResult");
-    let currentJobId="", pollTimer=null;
+    const workspaceSelect=$("workspaceSelect"), documentList=$("documentList"), researchResult=$("researchResult"), conversationList=$("conversationList");
+    let currentJobId="", pollTimer=null, eventSource=null, researchEvents=[], currentConversationId="";
 
     const SESSION_KEY = "rag_chat_session_v1";
     const CLIENT_SESSION_ID_KEY = "rag_chat_client_session_id_v1";
-    const clientSessionId = localStorage.getItem(CLIENT_SESSION_ID_KEY) || ("web-" + Math.random().toString(36).slice(2, 10));
+    const clientSessionId = localStorage.getItem(CLIENT_SESSION_ID_KEY) || ("web-" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : Math.random().toString(36).slice(2, 14)));
     localStorage.setItem(CLIENT_SESSION_ID_KEY, clientSessionId);
 
     const urlBaseFromQuery = new URLSearchParams(location.search).get("api");
@@ -547,12 +559,20 @@
       } catch(e){ documentList.textContent="空间加载失败："+e.message; }
     }
     async function loadDocuments(){ const id=workspaceSelect.value;if(!id){documentList.textContent="未选择空间";return} const rows=await (await fetch(getBase()+`/workspaces/${id}/documents`)).json();documentList.textContent=rows.length?rows.map(x=>`${x.file_name} · ${x.status} · ${x.page_count}页`).join("\n"):"当前使用 demo 资料，可继续上传"; }
+    async function loadConversations(){try{const rows=await (await fetch(getBase()+`/conversations?client_id=${encodeURIComponent(clientSessionId)}`)).json();conversationList.innerHTML="";if(!rows.length){conversationList.innerHTML='<div class="meta">暂无历史对话</div>';return}rows.forEach(c=>{const row=document.createElement("div");row.className="conversation-item"+(c.conversation_id===currentConversationId?" active":"");row.dataset.id=c.conversation_id;row.dataset.workspace=c.workspace_id||"";const title=document.createElement("span");title.className="conversation-title";title.textContent=c.title;const del=document.createElement("button");del.className="conversation-delete";del.textContent="×";del.title="删除对话";row.append(title,del);conversationList.appendChild(row)})}catch(e){conversationList.innerHTML=`<div class="meta">历史加载失败：${escapeHtml(e.message)}</div>`}}
+    function clearChat(){chatEl.innerHTML=""}
+    function welcome(){appendBotBundle("你好，我是企业多模态研究 Agent。你可以直接提问，也可以切换到复杂研究模式查看实时执行轨迹。",{branch:"—",verified:true,cost_ms:0,rewritten_query:"—",hits:[]})}
+    async function createConversation(){const r=await fetch(getBase()+"/conversations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:clientSessionId,workspace_id:workspaceSelect.value||null,title:"新对话"})});if(!r.ok)throw new Error(await r.text());const c=await r.json();currentConversationId=c.conversation_id;clearChat();welcome();await loadConversations();return c}
+    async function ensureConversation(){if(!currentConversationId)await createConversation();return currentConversationId}
+    async function openConversation(id,workspace){currentConversationId=id;if(workspace&&Array.from(workspaceSelect.options).some(x=>x.value===workspace)){workspaceSelect.value=workspace;await loadDocuments()}const r=await fetch(getBase()+`/conversations/${id}/messages?client_id=${encodeURIComponent(clientSessionId)}`);if(!r.ok)throw new Error(await r.text());const rows=await r.json();clearChat();if(!rows.length)welcome();rows.forEach(m=>{if(m.role==="user")appendUserMessage(m.content,m.payload?.topk||3);else appendBotBundle(m.content,m.payload||{})});await loadConversations()}
     async function createWorkspace(){const name=$("workspaceName").value.trim();if(!name)return;const r=await fetch(getBase()+"/workspaces",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,use_demo:true})});const w=await r.json();await loadWorkspaces();workspaceSelect.value=w.workspace_id;await loadDocuments();}
     async function uploadDocument(){const id=workspaceSelect.value,file=$("documentFile").files[0];if(!id||!file){setStatus("请先选择空间和文件","err");return}const fd=new FormData();fd.append("file",file);setStatus("资料入库中...");const r=await fetch(getBase()+`/workspaces/${id}/documents`,{method:"POST",body:fd});if(!r.ok)throw new Error(await r.text());await loadWorkspaces();setStatus("资料已入库","ok");}
     function evidenceHtml(plan){return plan.flatMap(s=>(s.evidence||[]).map(e=>`<div class="evidence-item"><b>${escapeHtml(e.file_name)}</b> · ${e.page_no==null?escapeHtml(e.page_id):"p."+e.page_no}<br>${escapeHtml(e.excerpt||"")}</div>`)).join("")}
     function escapeHtml(s){const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML}
-    async function pollJob(){if(!currentJobId)return;const j=await (await fetch(getBase()+`/research/jobs/${currentJobId}`)).json();researchResult.innerHTML=`<b>${escapeHtml(j.status)} · ${j.progress}%</b><div class="progress"><i style="width:${j.progress}%"></i></div>${(j.plan||[]).map(s=>`<p>${escapeHtml(s.title)} · ${escapeHtml(s.tool_name)} · ${escapeHtml(s.status)} · ${s.verified?"已验证":"待验证"}</p>`).join("")}<details><summary>页级证据</summary>${evidenceHtml(j.plan||[])||"暂无证据"}</details>`;if(j.status==="completed"){clearInterval(pollTimer);researchResult.innerHTML+=`<p><a target="_blank" href="${getBase()}/research/jobs/${currentJobId}/report.html">查看 HTML 报告</a> · <a href="${getBase()}/research/jobs/${currentJobId}/report.md">下载 Markdown</a></p>`}else if(["failed","cancelled"].includes(j.status))clearInterval(pollTimer)}
-    async function submitResearch(){const workspace_id=workspaceSelect.value,objective=$("researchObjective").value.trim();if(!workspace_id||!objective){setStatus("请选择空间并填写研究目标","err");return}const r=await fetch(getBase()+"/research/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({workspace_id,objective,session_id:clientSessionId})});if(!r.ok)throw new Error(await r.text());currentJobId=(await r.json()).job_id;$("cancelResearchBtn").disabled=false;pollTimer=setInterval(pollJob,700);pollJob()}
+    function timelineHtml(){return `<div class="event-timeline">${researchEvents.map(e=>`<div class="event-row">${escapeHtml(e.message)}<span class="event-time">${escapeHtml(e.stage)} · ${e.progress}%</span></div>`).join("")||'<div class="meta">等待执行事件…</div>'}</div>`}
+    async function pollJob(){if(!currentJobId)return;const r=await fetch(getBase()+`/research/jobs/${currentJobId}`);if(!r.ok)return;const j=await r.json();researchResult.innerHTML=`<b>${escapeHtml(j.status)} · ${j.progress}%</b><div class="progress"><i style="width:${j.progress}%"></i></div>${timelineHtml()}<details><summary>计划与步骤</summary>${(j.plan||[]).map(s=>`<p>${escapeHtml(s.title)} · ${escapeHtml(s.tool_name)} · ${escapeHtml(s.status)} · ${s.verified?"已验证":"待验证"}</p>`).join("")}</details><details><summary>页级证据</summary>${evidenceHtml(j.plan||[])||"暂无证据"}</details>`;if(j.status==="completed"){clearInterval(pollTimer);if(eventSource)eventSource.close();researchResult.innerHTML+=`<p><a target="_blank" href="${getBase()}/research/jobs/${currentJobId}/report.html">查看 HTML 报告</a> · <a href="${getBase()}/research/jobs/${currentJobId}/report.md">下载 Markdown</a></p>`}else if(["failed","cancelled"].includes(j.status)){clearInterval(pollTimer);if(eventSource)eventSource.close()}}
+    function startEventStream(jobId){if(eventSource)eventSource.close();eventSource=new EventSource(getBase()+`/research/jobs/${jobId}/events`);const types=["job_created","planning_started","plan_created","step_started","retrieval_completed","verification_passed","verification_failed","step_completed","step_failed","report_started","job_completed","job_failed","job_cancelled"];types.forEach(type=>eventSource.addEventListener(type,e=>{try{const item=JSON.parse(e.data);if(!researchEvents.some(x=>x.sequence_no===item.sequence_no))researchEvents.push(item);pollJob()}catch(_){}}));eventSource.onerror=()=>setStatus("执行事件流暂时断开，正在自动重连…","err")}
+    async function submitResearch(){const workspace_id=workspaceSelect.value,objective=$("researchObjective").value.trim();if(!workspace_id||!objective){setStatus("请选择空间并填写研究目标","err");return}const r=await fetch(getBase()+"/research/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({workspace_id,objective,session_id:clientSessionId})});if(!r.ok)throw new Error(await r.text());currentJobId=(await r.json()).job_id;researchEvents=[];$("cancelResearchBtn").disabled=false;startEventStream(currentJobId);pollTimer=setInterval(pollJob,2000);pollJob()}
 
     function loadSession() {
       try {
@@ -769,16 +789,16 @@
       const topk = Math.max(1, Math.min(20, Number(topkEl.value || 3)));
       const base = getBase();
       sendBtn.disabled = true;
-      appendUserMessage(query, topk);
-      appendThinkingPlaceholder();
-      setStatus("正在请求 /ask ...");
-
       const t0 = Date.now();
       try {
+        await ensureConversation();
+        appendUserMessage(query, topk);
+        appendThinkingPlaceholder();
+        setStatus("正在请求 /ask ...");
         const r = await fetch(base + "/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, topk, session_id: clientSessionId, workspace_id: workspaceSelect.value || null })
+          body: JSON.stringify({ query, topk, session_id: currentConversationId, client_id: clientSessionId, conversation_id: currentConversationId, workspace_id: workspaceSelect.value || null })
         });
         if (!r.ok) {
           const t = await r.text();
@@ -795,6 +815,7 @@
           response: data,
         };
         saveSessionEntry(entry);
+        await loadConversations();
         setStatus("请求成功", "ok");
       } catch (e) {
         removeThinkingPlaceholder();
@@ -871,13 +892,15 @@
       loadWorkspaces();
     });
     $("createWorkspaceBtn").addEventListener("click",createWorkspace);workspaceSelect.addEventListener("change",loadDocuments);$("uploadDocumentBtn").addEventListener("click",()=>uploadDocument().catch(e=>setStatus(e.message,"err")));$("submitResearchBtn").addEventListener("click",()=>submitResearch().catch(e=>setStatus(e.message,"err")));$("cancelResearchBtn").addEventListener("click",async()=>{if(currentJobId)await fetch(getBase()+`/research/jobs/${currentJobId}/cancel`,{method:"POST"});pollJob()});
+    $("newConversationBtn").addEventListener("click",()=>createConversation().catch(e=>setStatus(e.message,"err")));conversationList.addEventListener("click",e=>{const row=e.target.closest(".conversation-item");if(!row)return;if(e.target.classList.contains("conversation-delete")){fetch(getBase()+`/conversations/${row.dataset.id}?client_id=${encodeURIComponent(clientSessionId)}`,{method:"DELETE"}).then(()=>{if(currentConversationId===row.dataset.id){currentConversationId="";clearChat();welcome()}loadConversations()});return}openConversation(row.dataset.id,row.dataset.workspace).catch(err=>setStatus(err.message,"err"))});workspaceSelect.addEventListener("change",()=>{if(currentConversationId){currentConversationId="";clearChat();welcome();loadConversations()}});
     document.querySelectorAll(".mode-tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".mode-tab").forEach(x=>x.classList.toggle("active",x===b));$("qaPanel").style.display=b.dataset.mode==="qa"?"block":"none";$("researchPanel").classList.toggle("active",b.dataset.mode==="research");document.querySelector(".toolbar").style.display=b.dataset.mode==="qa"?"flex":"none";}));
 
     renderSessionDump();
     refreshCaps();
     loadWorkspaces();
+    loadConversations();
 
-    appendBotBundle("你好，我是企业智能问答助手。回答正文在上；分支、命中页、耗时等折叠在「检索与运行详情」里。底部可导出本会话 JSON，服务端日志在 logs/api.log。", {
+    appendBotBundle("你好，我是企业多模态研究 Agent。左侧会自动保存历史对话；复杂研究模式会实时展示规划、检索、工具执行、证据校验和报告生成过程。", {
       branch: "—",
       verified: true,
       cost_ms: 0,
