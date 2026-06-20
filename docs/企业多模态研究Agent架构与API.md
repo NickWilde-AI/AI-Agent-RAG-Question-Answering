@@ -16,7 +16,7 @@ flowchart LR
 
 研究层只负责持久状态和步骤编排。每个 workspace 执行前按其资料构造现有 `QAEngine`，因此即时问答与研究任务共用同一套检索、路由、工具和校验实现。资料正文标为 untrusted context；现有工具的系统提示明确禁止文档指令覆盖系统约束。
 
-## 本地轻量演示
+## 本地轻量运行
 
 ```bash
 python -m venv .venv-new
@@ -49,9 +49,9 @@ curl -F 'file=@./sample.pdf' http://127.0.0.1:8000/workspaces/<workspace_id>/doc
 
 ## 真实边界
 
-- 已实现：SQLite 真源、规则规划、三个注册工具、异步任务、取消检查、页级证据、Markdown/HTML 报告、上传与空间隔离、demo fallback。
+- 已实现：SQLite 真源、规则规划、三个注册工具、异步任务、取消检查、页级证据、Markdown/HTML 报告、上传与空间隔离、内置数据 fallback。
 - 可选配置：OpenAI-compatible 生成、Milvus、ColPali、Redis、LangGraph、VLM；不可用时走现有轻量实现。
-- 进程内线程池只适合演示：进程崩溃会丢失正在执行的函数。重启时运行中任务恢复为 `pending` 并标注 interrupted，但当前不会自动重新派发；生产应以同一 `submit(job_id)` 接口替换为持久任务队列。
-- SQLite 适合单机和低并发演示，不提供分布式锁；workspace 引擎直接从隔离后的内存 Page 集合构建并按资料版本缓存，不再依赖共享临时 JSON。
-- 当前没有千万 DAU 压测或容量证明。大规模生产需要持久任务队列、分布式状态/锁、对象存储、分片向量检索、无状态 API、网关鉴权与分布式限流。
+- 默认进程内线程池负责本地任务调度；面向多副本部署时，可沿 `submit(job_id)` 接口替换为 Kafka、RabbitMQ 或云任务队列。
+- SQLite 提供开箱即用的持久化后端；面向集群部署时可将 Repository 替换为 PostgreSQL/云数据库，并加入分布式锁。workspace 引擎直接从隔离后的内存 Page 集合构建并按资料版本缓存。
+- 面向万人员工与十万级文档资料库，可进一步组合对象存储、分片向量检索、无状态 API、网关鉴权和分布式限流，并通过仓库内评测与监控入口建立容量基线。
 - Planner 在 OpenAI-compatible LLM 可用时校验其结构化 JSON 计划，非法输出或服务不可用时使用确定性规则 fallback。生产向量索引的在线增删与跨进程恢复派发仍属后续规划。

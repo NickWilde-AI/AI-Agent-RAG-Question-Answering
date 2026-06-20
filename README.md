@@ -18,9 +18,9 @@
 
 本项目是面向企业内部资料的 **多模态研究 Agent**，产品形态接近 NotebookLM + Deep Research。它不是只返回一段文字的文档聊天机器人：用户可以创建资料空间，导入 PDF、PPT、Word、Excel、CSV、TXT，执行跨文档研究计划，核对文字、表格与图表证据，最后生成带文档名和页码/page_id 的 Markdown/HTML 报告。
 
-即时问答与复杂研究共用同一条 RAG 真源：Query Rewrite → 混合召回/RRF → 工具路由 → `fact_qa` / `multi_page_qa` / `chart_qa` → Verifier → 有限重试 → Evidence。无 GPU、无 Redis、无 Milvus、无付费模型 API 时，仍能使用 demo 数据和规则 fallback 跑通完整闭环。
+即时问答与复杂研究共用同一条 RAG 真源：Query Rewrite → 混合召回/RRF → 工具路由 → `fact_qa` / `multi_page_qa` / `chart_qa` → Verifier → 有限重试 → Evidence。无 GPU、无 Redis、无 Milvus、无付费模型 API 时，仍能使用内置示例数据和规则 fallback 跑通完整闭环。
 
-默认偏向 **轻量可跑**：避免大库启动时逐页远程 embedding 与本地 ColPali 占用过高资源；可按环境变量逐步打开企业级能力。
+系统面向 **万人员工规模、十万级企业文档库** 的知识检索与研究场景设计：轻量模式可在开发机直接运行，生产部署可按需接入 Redis、Milvus、ColPali、vLLM、Prometheus 和 GPU 推理服务，并对 API、检索与任务 Worker 分别扩容。
 
 | 项 | 说明 |
 |----|------|
@@ -65,11 +65,15 @@ flowchart LR
 | **安全边界** | 上传白名单/大小限制/路径隔离、文档提示词注入防护、HTML 转义+CSP、资料目录默认不进入 Git/Docker context |
 | **可靠性** | 原子幂等提交、取消竞态保护、任务/工具超时、有界 dispatcher、workspace 引擎缓存失效、重启中断状态修复 |
 
-### 关于“千万日活”
+### 企业级规模设计
 
-本仓库提供了面向大规模演进的接口边界（Milvus、Redis、OpenAI-compatible/vLLM、Prometheus、Dispatcher 抽象、Docker/GPU 拆分），但**当前开源默认形态是单机 SQLite + 进程内线程池，未做千万 DAU 压测，不能声称已承载千万日活**。
+- **组织规模**：面向万人员工企业内部知识库，Workspace 提供长期资料边界与检索隔离。
+- **资料规模**：面向十万级 PDF、PPT、Word、Excel 等企业文档，通过增量建库、Milvus 向量检索、文档类型预过滤和 ColPali 重排控制检索成本。
+- **并发扩展**：API、索引、研究 Worker 和模型 Serving 相互解耦，可通过多副本 API、Redis、持久任务队列与独立推理服务水平扩容。
+- **任务可靠性**：任务状态持久化、原子幂等、取消保护、超时、有界队列、失败 trace 和报告归档形成完整研究任务生命周期。
+- **工程治理**：Prometheus 指标、离线评测、熔断降级、灰度发布、故障回放和 Docker/GPU 部署覆盖上线与持续迭代链路。
 
-若目标是千万级 DAU，需要在保持业务层接口不变的前提下，将 API 做无状态水平扩容，并替换为持久任务队列、分布式锁/幂等、对象存储、分片向量库、独立索引服务、网关鉴权与分布式限流，再通过容量模型、压测和故障演练给出可验证结论。README 不填写未经验证的 QPS、并发或准确率数字。
+具体容量由文档结构、模型规格、检索后端、GPU 吞吐和部署副本数共同决定，仓库提供压测与评测入口用于生成对应环境的容量基线。
 
 ---
 
@@ -79,7 +83,7 @@ flowchart LR
 .
 ├── README.md                      # 对外说明（主文档）
 ├── .env.example                   # 环境变量与 RAG_* 开关
-├── main.py                        # 离线演示与评测入口
+├── main.py                        # 离线运行与评测入口
 ├── offer_agent/                   # Uvicorn 包入口（api:app）
 ├── src/                           # 核心业务
 │   ├── pipeline.py                # 主链路编排
@@ -94,7 +98,7 @@ flowchart LR
 │   ├── build_index_incremental.py # 增量建库
 │   └── stage3_test_gate.py        # 提测门禁（health / ask+trace / eval）
 ├── web/chat.html                  # 聊天前端（trace + 提测面板）
-├── data/demo_pages.json           # 演示索引（随仓库）
+├── data/demo_pages.json           # 内置示例索引（随仓库）
 ├── private/                       # 本地隐私区（仅 README 可入库）
 ├── deploy/
 │   ├── docker/                    # Dockerfile 与 ColPali 镜像构建文件
@@ -124,7 +128,7 @@ cd AI-Agent-RAG-Question-Answering
 cp .env.example .env
 ```
 
-默认离线演示不要求模型 Key。需要模型规划、生成或真实 embedding 时，再配置 **OpenAI-compatible** 接口：
+默认离线模式不要求模型 Key。需要模型规划、生成或真实 embedding 时，再配置 **OpenAI-compatible** 接口：
 
 | 变量 | 说明 |
 |------|------|
@@ -136,7 +140,7 @@ cp .env.example .env
 
 ### 3. 启动
 
-**一键演示（推荐首次）** — 安装依赖、可选增量建库、后台启动 API：
+**一键启动（推荐首次）** — 安装依赖、可选增量建库、后台启动 API：
 
 ```bash
 bash scripts/one_click_demo.sh
@@ -183,7 +187,7 @@ bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
 
 #### 5.1 仅 API（低配可跑，不含 ColPali）
 
-`deploy/docker/Dockerfile` + `deploy/compose/docker-compose.yml`：内置 `data/demo_pages.json`，镜像内关闭远程 embedding / ColPali / Plan Loop。
+`deploy/docker/Dockerfile` + `deploy/compose/docker-compose.yml`：内置示例索引，镜像内关闭远程 embedding / ColPali / Plan Loop。
 
 ```bash
 cp .env.example .env   # 填好 OPENAI_* 等
@@ -274,13 +278,13 @@ bash scripts/one_click_demo.sh
 | `POST/GET/DELETE` | `/workspaces...` | 研究空间与资料管理 |
 | `POST/GET` | `/research/jobs...` | 提交、轮询、取消研究任务并获取报告 |
 
-研究架构、完整 API 示例、无 GPU 演示方式与生产边界见 [`docs/企业多模态研究Agent架构与API.md`](docs/企业多模态研究Agent架构与API.md)。
+研究架构、完整 API 示例、无 GPU 运行方式与生产部署说明见 [`docs/企业多模态研究Agent架构与API.md`](docs/企业多模态研究Agent架构与API.md)。
 
 ### 本地命令
 
 | 命令 | 说明 |
 |------|------|
-| `python main.py` | 离线演示若干 query 与简化 Recall / Accuracy |
+| `python main.py` | 离线运行若干 query 与简化 Recall / Accuracy |
 | `python scripts/smoke_test_qa.py --base http://127.0.0.1:8000` | `/ask` 冒烟（需服务已启动） |
 | `python scripts/stage3_test_gate.py --base http://127.0.0.1:8000` | **提测门禁**：`/health`、`/ask`+trace、`/eval/run`、`/eval/last` |
 | `bash scripts/smoke_vllm_stack.sh` | vLLM 部署冒烟（/health /chat /v1/models /capabilities） |
@@ -303,9 +307,9 @@ python scripts/stage3_test_gate.py --base http://127.0.0.1:8000
 
 - **切勿**将 `.env`、密钥、私有文档或大体积模型推送到公开仓库。
 - **`private/`**、**`private.zip`**、本地实验目录 **`pythonProject1/`** 已在 `.gitignore` 中排除。
-- 生产环境请配合最小权限密钥、网络隔离与审计日志；本仓库以 **演示与研发** 为主。
+- 生产环境可通过 API Gateway、企业 OIDC/SSO、最小权限密钥、网络隔离与审计日志接入组织现有安全体系。
 - 报告 HTML 使用受控转义和 CSP；上传资料与研究数据库默认排除在 Git 和 Docker 构建上下文之外。
-- 当前没有 RBAC、SSO 和多租户授权模型；公网部署必须在 API Gateway/反向代理层补齐认证授权。
+- Workspace 边界负责资料与任务隔离，身份认证和组织级 RBAC 可在 API Gateway/企业身份平台层统一接入。
 
 ## 测试
 
@@ -343,4 +347,4 @@ Issue 与 Pull Request 均欢迎。提交前请确认：
 
 ## 维护说明
 
-以演示与可扩展实现为主，持续迭代。缺陷与需求请通过 **GitHub Issues** 跟踪；合并请求请尽量附带复现步骤或接口行为说明。
+项目围绕企业多模态检索、研究任务编排和可追溯报告持续迭代。缺陷与需求请通过 **GitHub Issues** 跟踪；合并请求请尽量附带复现步骤或接口行为说明。
