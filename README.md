@@ -175,7 +175,7 @@ OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_API_KEY=你的百炼APIKey
 OPENAI_CHAT_MODEL=qwen-plus
 OPENAI_EMBEDDING_MODEL=text-embedding-v3
-RAG_VISION_PARSER_MODEL=qwen-vl-max-latest
+RAG_VISION_PARSER_MODEL=qwen-vl-ocr
 RAG_VISION_PARSE_MODE=auto
 ```
 

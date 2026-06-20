@@ -106,7 +106,7 @@ class Settings:
     chart_parsing_api: str = os.getenv("RAG_CHART_PARSING_API", "")
     # 文档入库阶段：复用 DashScope OpenAI-compatible 地址和 Key，调用千问 VL 解析页图。
     enable_qwen_vision_parser: bool = _get_bool("RAG_ENABLE_QWEN_VISION_PARSER", False)
-    vision_parser_model: str = os.getenv("RAG_VISION_PARSER_MODEL", "qwen-vl-max-latest")
+    vision_parser_model: str = os.getenv("RAG_VISION_PARSER_MODEL", "qwen-vl-ocr")
     vision_parse_mode: str = os.getenv("RAG_VISION_PARSE_MODE", "auto").strip().lower()
     vision_parser_workers: int = int(os.getenv("RAG_VISION_PARSER_WORKERS", "3"))
     vision_parser_timeout_seconds: float = float(os.getenv("RAG_VISION_PARSER_TIMEOUT_SECONDS", "60"))

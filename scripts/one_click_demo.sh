@@ -163,7 +163,7 @@ set +a
 
 if [ "$QWEN_MODE" = "1" ]; then
   export RAG_ENABLE_QWEN_VISION_PARSER=true
-  export RAG_VISION_PARSER_MODEL="${RAG_VISION_PARSER_MODEL:-qwen-vl-max-latest}"
+  export RAG_VISION_PARSER_MODEL="${RAG_VISION_PARSER_MODEL:-qwen-vl-ocr}"
   RAG_BUILD_PAGE_IMAGES=1
 fi
 
