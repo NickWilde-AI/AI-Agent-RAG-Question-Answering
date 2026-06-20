@@ -152,6 +152,7 @@ bash scripts/one_click_demo.sh
 
 ```bash
 bash scripts/one_click_demo.sh --api       # 使用 .env 中的 OpenAI-compatible API
+bash scripts/one_click_demo.sh --qwen      # 千问文本生成 + 千问 VL 页面视觉解析
 bash scripts/one_click_demo.sh --full      # API + Redis + ColPali（需 Docker/GPU）
 bash scripts/one_click_demo.sh --status    # 查看状态
 bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
@@ -165,6 +166,20 @@ bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
 |------|------|------|
 | 轻量（默认） | `bash scripts/one_click_demo.sh` | `RAG_LITE_MODE=1`：不拉 ColPali、不启 Docker Redis，关闭重型 embedding / rerank / Loop |
 | 全量链路 | `bash scripts/one_click_demo.sh --full` | ColPali + Redis 等（需本机或 GPU 云资源） |
+| 千问增强 | `bash scripts/one_click_demo.sh --qwen` | 复用 DashScope 配置；本地抽取文字，扫描页/图片/复杂图表由千问 VL 增强 |
+
+千问增强配置：
+
+```bash
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_API_KEY=你的百炼APIKey
+OPENAI_CHAT_MODEL=qwen-plus
+OPENAI_EMBEDDING_MODEL=text-embedding-v3
+RAG_VISION_PARSER_MODEL=qwen-vl-max-latest
+RAG_VISION_PARSE_MODE=auto
+```
+
+`--qwen` 启动前会用合成文字和合成图片做 API 预检，不会发送 `user_docs`。认证或模型配置失败会立即停止，避免整库重复请求。`auto` 只增强扫描页、含图片页和复杂绘图页；追求最高解析质量可改成 `all`，但耗时和 API 费用也会明显增加。
 
 **本地开发（热重载）**：
 
@@ -312,6 +327,7 @@ bash scripts/one_click_demo.sh
 | `bash scripts/drill_incident_replay.sh` | 故障演练：质量失败样本自动回放 |
 | `bash scripts/run_ocr_vs_visual_eval.sh` | 一键产出视觉链路 vs OCR 基线对照报告 |
 | `python scripts/load_test.py --mode mixed --stages 10:10,50:20,100:30` | 分阶段并发压测，输出 P50/P95/P99、RPS、错误与报告 |
+| `python scripts/check_qwen_api.py` | 使用合成内容检查千问文本/视觉模型配置，不发送企业文档 |
 
 提测示例（先 `bash scripts/one_click_demo.sh`）：
 

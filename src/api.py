@@ -204,6 +204,8 @@ def capabilities() -> Dict[str, Any]:
         "research_jobs": True,
         "research_sse_events": True,
         "anonymous_conversations": True,
+        "qwen_vision_parser": bool(SETTINGS.enable_qwen_vision_parser and SETTINGS.effective_openai_api_key),
+        "qwen_vision_model": SETTINGS.vision_parser_model if SETTINGS.enable_qwen_vision_parser else "",
         "report_generation": True,
         "job_backend": "in_process_thread_pool",
         "agentic_query_expansion": SETTINGS.enable_query_expansion,

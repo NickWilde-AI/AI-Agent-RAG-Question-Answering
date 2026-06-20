@@ -2,11 +2,13 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
 
 from scripts.load_test import parse_stages, percentile
+from src.infra.pdf_ingest import ingest_pdf_with_pymupdf
 
 
 def test_parse_stages_and_percentile():
@@ -30,3 +32,46 @@ def test_lightweight_incremental_pdf_build_skips_images_and_second_parse(tmp_pat
     assert "重建文档 : 0  |  跳过 : 1" in second.stdout
     saved=json.loads(manifest.read_text(encoding="utf-8"))
     assert list(saved)==["sample.pdf"]
+
+
+def test_qwen_vision_parser_enriches_page_and_keeps_local_text(tmp_path,monkeypatch):
+    source=tmp_path/"visual.pdf"; images=tmp_path/"images"
+    pdf=fitz.open(); page=pdf.new_page(); page.insert_text((72,72),"local text")
+    pdf.save(str(source)); pdf.close()
+
+    class FakeParser:
+        enabled=True
+        def parse(self,image_path,local_text=""):
+            assert Path(image_path).exists() and "local text" in local_text
+            return "# 视觉标题\n采购单号：PO-123"
+
+    settings=SimpleNamespace(
+        vision_parse_mode="auto",vision_min_text_chars=200,vision_drawing_threshold=12,
+        vision_parser_workers=2,vision_parser_model="qwen-vl-test",
+    )
+    monkeypatch.setattr("src.infra.pdf_ingest.QwenVisionPageParser",FakeParser)
+    monkeypatch.setattr("src.infra.pdf_ingest.SETTINGS",settings)
+    pages=ingest_pdf_with_pymupdf(str(source),"doc",image_output_dir=str(images),dpi=72)
+    assert "local text" in pages[0].content and "PO-123" in pages[0].content
+    assert pages[0].metadata["vision_parse_status"] == "success"
+
+
+def test_qwen_auth_failure_stops_following_page_calls(tmp_path,monkeypatch):
+    source=tmp_path/"two-pages.pdf"; images=tmp_path/"images"
+    pdf=fitz.open()
+    for _ in range(2): pdf.new_page()
+    pdf.save(str(source)); pdf.close()
+    calls=[]
+    class FailedParser:
+        enabled=True
+        def parse(self,image_path,local_text=""):
+            calls.append(image_path); raise RuntimeError("invalid key")
+    settings=SimpleNamespace(
+        vision_parse_mode="all",vision_min_text_chars=200,vision_drawing_threshold=12,
+        vision_parser_workers=2,vision_parser_model="qwen-vl-test",
+    )
+    monkeypatch.setattr("src.infra.pdf_ingest.QwenVisionPageParser",FailedParser)
+    monkeypatch.setattr("src.infra.pdf_ingest.SETTINGS",settings)
+    pages=ingest_pdf_with_pymupdf(str(source),"doc",image_output_dir=str(images),dpi=72)
+    assert len(calls)==1
+    assert [p.metadata["vision_parse_status"] for p in pages] == ["fallback","fallback"]

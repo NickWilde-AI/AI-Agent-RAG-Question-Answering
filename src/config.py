@@ -90,6 +90,7 @@ class Settings:
     enable_colpali_rerank: bool = _get_bool("RAG_ENABLE_COLPALI_RERANK", False)
     enable_function_calling_router: bool = _get_bool("RAG_ENABLE_FUNCTION_CALLING_ROUTER", True)
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    dashscope_api_key: str = os.getenv("DASHSCOPE_API_KEY", "")
     oapi_api_key: str = os.getenv("OAPI_API_KEY", "")
     openai_base_url: str = _normalize_openai_base_url(os.getenv("OPENAI_BASE_URL", ""))
     openai_chat_model: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
@@ -103,6 +104,16 @@ class Settings:
     colpali_rerank_max_pages: int = int(os.getenv("RAG_COLPALI_RERANK_MAX_PAGES", "6"))
     vlm_api: str = os.getenv("RAG_VLM_API", "")
     chart_parsing_api: str = os.getenv("RAG_CHART_PARSING_API", "")
+    # 文档入库阶段：复用 DashScope OpenAI-compatible 地址和 Key，调用千问 VL 解析页图。
+    enable_qwen_vision_parser: bool = _get_bool("RAG_ENABLE_QWEN_VISION_PARSER", False)
+    vision_parser_model: str = os.getenv("RAG_VISION_PARSER_MODEL", "qwen-vl-max-latest")
+    vision_parse_mode: str = os.getenv("RAG_VISION_PARSE_MODE", "auto").strip().lower()
+    vision_parser_workers: int = int(os.getenv("RAG_VISION_PARSER_WORKERS", "3"))
+    vision_parser_timeout_seconds: float = float(os.getenv("RAG_VISION_PARSER_TIMEOUT_SECONDS", "60"))
+    vision_min_text_chars: int = int(os.getenv("RAG_VISION_MIN_TEXT_CHARS", "200"))
+    vision_drawing_threshold: int = int(os.getenv("RAG_VISION_DRAWING_THRESHOLD", "12"))
+    vision_office_to_pdf: bool = _get_bool("RAG_VISION_OFFICE_TO_PDF", True)
+
     external_api_timeout_seconds: float = float(os.getenv("RAG_EXTERNAL_API_TIMEOUT_SECONDS", "10"))
     colpali_model_id: str = os.getenv("COLPALI_MODEL_ID", "vidore/colpali-v1.3")
     colpali_model_dir: str = os.getenv("COLPALI_MODEL_DIR", "models/colpali-v1.3")
@@ -149,6 +160,12 @@ class Settings:
     enable_vlm_circuit_breaker: bool = _get_bool("RAG_ENABLE_VLM_CIRCUIT_BREAKER", True)
     vlm_cb_failures: int = int(os.getenv("RAG_VLM_CB_FAILURES", "3"))
     vlm_cb_recovery_seconds: float = float(os.getenv("RAG_VLM_CB_RECOVERY_SECONDS", "30"))
+
+    @property
+    def effective_openai_api_key(self) -> str:
+        if "dashscope.aliyuncs.com" in self.openai_base_url and self.dashscope_api_key:
+            return self.dashscope_api_key
+        return self.openai_api_key
 
 
 SETTINGS = Settings()

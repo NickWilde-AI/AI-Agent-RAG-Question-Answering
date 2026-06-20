@@ -27,6 +27,7 @@ from typing import Dict, List, Tuple, Union
 
 from src.infra.document_ingest import SUPPORTED_EXTENSIONS, ingest_document, is_supported_document
 from src.models import Page
+from src.config import SETTINGS
 
 
 SEVEN_DOC_TYPES = [
@@ -109,6 +110,9 @@ def file_signature(file_path: Path, doc_id: str, dpi: int, render_images: bool) 
         "ext": file_path.suffix.lower(),
         "dpi": str(dpi),
         "render_images": str(render_images).lower(),
+        "vision_parser": str(SETTINGS.enable_qwen_vision_parser).lower(),
+        "vision_model": SETTINGS.vision_parser_model if SETTINGS.enable_qwen_vision_parser else "",
+        "vision_mode": SETTINGS.vision_parse_mode if SETTINGS.enable_qwen_vision_parser else "",
     }
 
 
@@ -240,6 +244,7 @@ def main() -> None:
             new_manifest[key] = file_signature(document,doc_id,args.dpi,render_images)
             skipped_files += 1
             continue
+        new_manifest.pop(key,None)
 
         doc_type = infer_doc_type(document)
         print(f"[增量建库] 正在解析: {display_path(document, Path.cwd())}  （大 PDF 可能需数分钟）", flush=True)
@@ -267,7 +272,13 @@ def main() -> None:
             doc_to_pages.pop(old_doc_id, None)
         doc_to_pages.pop(legacy_doc_id(document), None)
         doc_to_pages[doc_id] = pages
-        new_manifest[key] = file_signature(document,doc_id,args.dpi,render_images)
+        vision_failed = SETTINGS.enable_qwen_vision_parser and any(
+            page.metadata.get("vision_parse_status") == "fallback" for page in pages
+        )
+        if not vision_failed:
+            new_manifest[key] = file_signature(document,doc_id,args.dpi,render_images)
+        else:
+            print("[WARN] 视觉增强未成功，本文件不写入完成标记；修复 API 配置后下次会自动重试。",flush=True)
         rebuilt_doc_ids.append(doc_id)
 
         # 每完成一个文件就 checkpoint；中断后无需重复解析已经完成的大文件。

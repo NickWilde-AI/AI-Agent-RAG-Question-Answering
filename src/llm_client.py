@@ -52,7 +52,7 @@ class LLMClient:
         api_key = (
             SETTINGS.oapi_api_key
             if "oapi.uk" in SETTINGS.openai_base_url and SETTINGS.oapi_api_key
-            else SETTINGS.openai_api_key
+            else SETTINGS.effective_openai_api_key
         )
         if not api_key:
             return cls(client=None, chat_model=SETTINGS.openai_chat_model, embedding_model=SETTINGS.openai_embedding_model)

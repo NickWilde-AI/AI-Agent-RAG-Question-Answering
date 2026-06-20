@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 
 from ..models import Page
+from ..config import SETTINGS
 from .pdf_ingest import ingest_pdf_with_pymupdf
 
 
@@ -305,6 +306,13 @@ def ingest_document(
             language=language,
             image_output_dir=image_output_dir,
             dpi=dpi,
+        )
+    if suffix in {".docx", ".xlsx", ".pptx"} and SETTINGS.enable_qwen_vision_parser and SETTINGS.vision_office_to_pdf:
+        if _libreoffice_binary():
+            return _ingest_via_libreoffice_pdf(path, doc_id, doc_type, language, image_output_dir, dpi)
+        warnings.warn(
+            f"千问视觉解析已开启，但未安装 LibreOffice；{path.name} 暂时使用本地文本解析，复杂版式和图片可能丢失。",
+            RuntimeWarning,
         )
     if suffix == ".docx":
         return _ingest_docx(path, doc_id, doc_type, language, max_text_chars)

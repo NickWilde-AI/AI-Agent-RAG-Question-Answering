@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 #
 #   bash scripts/one_click_demo.sh             # 默认纯本地离线，不请求模型 API
 #   bash scripts/one_click_demo.sh --api       # 使用 .env 中 OpenAI-compatible API
+#   bash scripts/one_click_demo.sh --qwen      # 千问文本生成 + 千问VL文档页面解析
 #   bash scripts/one_click_demo.sh --full      # API + Redis + 本地 ColPali（需 Docker/GPU）
 #   bash scripts/one_click_demo.sh --status    # 查看服务状态
 #   bash scripts/one_click_demo.sh --stop      # 停止本脚本启动的服务
@@ -18,12 +19,14 @@ cd "$(dirname "$0")/.."
 : "${RAG_LITE_MODE:=1}"
 : "${RAG_OFFLINE_MODE:=1}"
 : "${RAG_ENABLE_PUBLIC_TUNNEL:=0}"
+QWEN_MODE=0
 
 ACTION="start"
 for arg in "$@"; do
   case "$arg" in
     --offline) RAG_OFFLINE_MODE=1 ;;
     --api) RAG_OFFLINE_MODE=0 ;;
+    --qwen) RAG_OFFLINE_MODE=0; QWEN_MODE=1 ;;
     --full) RAG_OFFLINE_MODE=0; RAG_LITE_MODE=0 ;;
     --skip-index) RAG_SKIP_INDEX_BUILD=1 ;;
     --status) ACTION="status" ;;
@@ -158,6 +161,12 @@ fi
 set -u
 set +a
 
+if [ "$QWEN_MODE" = "1" ]; then
+  export RAG_ENABLE_QWEN_VISION_PARSER=true
+  export RAG_VISION_PARSER_MODEL="${RAG_VISION_PARSER_MODEL:-qwen-vl-max-latest}"
+  RAG_BUILD_PAGE_IMAGES=1
+fi
+
 if [ "$RAG_OFFLINE_MODE" = "1" ]; then
   # 默认演示不把文档内容发送到任何远端模型或服务。
   export OPENAI_API_KEY="" OAPI_API_KEY=""
@@ -168,7 +177,15 @@ if [ "$RAG_OFFLINE_MODE" = "1" ]; then
   export RAG_VECTOR_BACKEND=inmemory RAG_SESSION_BACKEND=memory
   echo "运行模式：纯本地离线（规则规划 + 哈希/BM25 检索 + demo fallback，不调用远端模型 API）"
 else
-  echo "运行模式：API（使用 .env 中显式配置的 OpenAI-compatible 服务）"
+  if [ "$QWEN_MODE" = "1" ]; then
+    echo "运行模式：千问增强（qwen-plus 文本生成 + ${RAG_VISION_PARSER_MODEL} 页面视觉解析）"
+  else
+    echo "运行模式：API（使用 .env 中显式配置的 OpenAI-compatible 服务）"
+  fi
+fi
+if [ "$QWEN_MODE" = "1" ] && [ "${RAG_SKIP_QWEN_PREFLIGHT:-0}" != "1" ]; then
+  echo "== 千问 API 预检（仅发送合成测试内容）=="
+  "$PYTHON" scripts/check_qwen_api.py
 fi
 # 可选变量：.env 未声明时给默认值，避免 set -u 与后续命令报错
 RAG_BUILD_DPI="${RAG_BUILD_DPI:-144}"
