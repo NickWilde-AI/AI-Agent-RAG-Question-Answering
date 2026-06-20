@@ -126,6 +126,8 @@ def ingest_pdf_with_pymupdf(
         first_target, first_local = vision_candidates[0]
         try:
             apply_result(first_target, vision_parser.parse(first_target.image_path or "", first_local))
+            completed=1
+            print(f"[千问VL解析] 页面进度 {completed}/{len(vision_candidates)}",flush=True)
         except Exception as exc:
             for target, _ in vision_candidates:
                 target.metadata["vision_parse_status"] = "fallback"
@@ -148,4 +150,7 @@ def ingest_pdf_with_pymupdf(
                     target.metadata["vision_parse_status"] = "fallback"
                     target.metadata["vision_parse_error"] = type(exc).__name__
                     print(f"[WARN] 千问VL解析失败，保留本地文本: {target.page_id} ({type(exc).__name__})", flush=True)
+                completed += 1
+                if completed % 10 == 0 or completed == len(vision_candidates):
+                    print(f"[千问VL解析] 页面进度 {completed}/{len(vision_candidates)}",flush=True)
     return pages

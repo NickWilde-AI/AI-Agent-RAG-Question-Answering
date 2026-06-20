@@ -29,6 +29,7 @@ user_docs/
 kb_pages/
 data/user_pages.json
 data/index_manifest.json
+data/embedding_cache.json
 logs/
 *.log
 

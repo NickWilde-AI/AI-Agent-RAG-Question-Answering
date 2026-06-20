@@ -57,6 +57,7 @@ BM25_FALLBACK_COUNT = PromCounter(
     "Retrieval used BM25 fallback scoring",
 )
 from .infra.vector_store import BaseVectorStore, InMemoryVectorStore, MilvusVectorStore
+from .infra.embedding_cache import JSONEmbeddingCache
 from .llm_client import LLMClient
 from .models import Page, RetrievalHit
 from .services import ColPaliRerankClient, MultimodalEmbeddingClient
@@ -171,6 +172,9 @@ class PageRetriever:
         self.page_vectors: Dict[str, np.ndarray] = {}
         self.id_to_page: Dict[str, Page] = {p.page_id: p for p in pages}
         self._external_embed_failed = False
+        self._embedding_cache = JSONEmbeddingCache(SETTINGS.embedding_cache_path,SETTINGS.embedding_cache_max_entries)
+        self._embedding_cache_hits = 0
+        self._building_index = False
         self._page_token_counters: Dict[str, Counter] = {}
         self._doc_freq: Dict[str, int] = defaultdict(int)
         self._avg_doc_len = 1.0
@@ -218,8 +222,20 @@ class PageRetriever:
                         scope.set_tag("phase", "embed_text_multimodal")
                         sentry_sdk.capture_exception(exc)
         if SETTINGS.enable_real_embedding and self.llm_client and self.llm_client.enabled:
+            cache_key = self._embedding_cache.key(
+                SETTINGS.openai_base_url, SETTINGS.openai_embedding_model, text
+            )
+            if SETTINGS.enable_embedding_cache:
+                cached=self._embedding_cache.get(cache_key)
+                if cached is not None:
+                    self._embedding_cache_hits += 1
+                    return _normalize(np.array(cached,dtype=np.float32))
             try:
-                vec = np.array(self.llm_client.embed(text), dtype=np.float32)
+                raw_vec=self.llm_client.embed(text)
+                if SETTINGS.enable_embedding_cache:
+                    self._embedding_cache.put(cache_key,raw_vec)
+                    if not self._building_index: self._embedding_cache.save()
+                vec = np.array(raw_vec, dtype=np.float32)
                 return _normalize(vec)
             except Exception as exc:
                 self._external_embed_failed = True
@@ -308,14 +324,19 @@ class PageRetriever:
                 f"[PageRetriever] 正在为 {total} 页构建向量（远程 embedding 较慢，完成后才会开放 /health）…",
                 flush=True,
             )
-        for i, page in enumerate(self.pages, start=1):
-            vec = self._embed_page(page)
-            self.page_vectors[page.page_id] = vec
-            self.vector_store.upsert(page.page_id, vec.tolist())
-            if use_remote and total > 20 and (i == 1 or i % 50 == 0 or i == total):
-                print(f"[PageRetriever] 向量进度 {i}/{total}", flush=True)
+        self._building_index=True
+        try:
+            for i, page in enumerate(self.pages, start=1):
+                vec = self._embed_page(page)
+                self.page_vectors[page.page_id] = vec
+                self.vector_store.upsert(page.page_id, vec.tolist())
+                if use_remote and total > 20 and (i == 1 or i % 50 == 0 or i == total):
+                    print(f"[PageRetriever] 向量进度 {i}/{total}", flush=True)
+        finally:
+            self._building_index=False
+            if SETTINGS.enable_embedding_cache: self._embedding_cache.save()
         if total > 20 and use_remote:
-            print(f"[PageRetriever] 向量索引完成，共 {total} 页", flush=True)
+            print(f"[PageRetriever] 向量索引完成，共 {total} 页，缓存命中 {self._embedding_cache_hits}", flush=True)
 
     def rewrite_query(self, query: str) -> str:
         """

@@ -113,6 +113,9 @@ class Settings:
     vision_min_text_chars: int = int(os.getenv("RAG_VISION_MIN_TEXT_CHARS", "200"))
     vision_drawing_threshold: int = int(os.getenv("RAG_VISION_DRAWING_THRESHOLD", "12"))
     vision_office_to_pdf: bool = _get_bool("RAG_VISION_OFFICE_TO_PDF", True)
+    enable_embedding_cache: bool = _get_bool("RAG_ENABLE_EMBEDDING_CACHE", True)
+    embedding_cache_path: str = os.getenv("RAG_EMBEDDING_CACHE_PATH", "data/embedding_cache.json")
+    embedding_cache_max_entries: int = int(os.getenv("RAG_EMBEDDING_CACHE_MAX_ENTRIES", "20000"))
 
     external_api_timeout_seconds: float = float(os.getenv("RAG_EXTERNAL_API_TIMEOUT_SECONDS", "10"))
     colpali_model_id: str = os.getenv("COLPALI_MODEL_ID", "vidore/colpali-v1.3")
