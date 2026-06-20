@@ -2,9 +2,9 @@
 
 # AI-Agent-RAG-Question-Answering
 
-**企业级视觉 RAG 与 Agent 编排演示 — 可观测、可开关、可增量建库**
+**企业多模态研究 Agent — 资料空间、深度研究、图表分析与可追溯报告**
 
-*Visual RAG Q&A with FastAPI: retrieval → routing → multi-tool QA → verification → optional agent loop.*
+*NotebookLM-style workspace + Deep Research orchestration + page-level multimodal RAG.*
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -16,7 +16,9 @@
 
 ## 项目简介
 
-本项目实现一套 **页面级（page-level）** 检索增强生成管线：混合向量与词面信号召回候选页，经规则或 LLM 路由到不同工具链（**事实问答 / 跨页归纳 / 图表读数**），再通过可证性校验与可选的 **Plan–Execute** 循环提升稳健性。内置 **Web 聊天台**（含链路 trace 与提测面板）、**Prometheus 指标**、**离线评测 API** 与 **增量多格式建库**（PDF / Office 等），适合作为 Agent + RAG 的工程化参考实现。
+本项目是面向企业内部资料的 **多模态研究 Agent**，产品形态接近 NotebookLM + Deep Research。它不是只返回一段文字的文档聊天机器人：用户可以创建资料空间，导入 PDF、PPT、Word、Excel、CSV、TXT，执行跨文档研究计划，核对文字、表格与图表证据，最后生成带文档名和页码/page_id 的 Markdown/HTML 报告。
+
+即时问答与复杂研究共用同一条 RAG 真源：Query Rewrite → 混合召回/RRF → 工具路由 → `fact_qa` / `multi_page_qa` / `chart_qa` → Verifier → 有限重试 → Evidence。无 GPU、无 Redis、无 Milvus、无付费模型 API 时，仍能使用 demo 数据和规则 fallback 跑通完整闭环。
 
 默认偏向 **轻量可跑**：避免大库启动时逐页远程 embedding 与本地 ColPali 占用过高资源；可按环境变量逐步打开企业级能力。
 
@@ -32,12 +34,13 @@
 
 ```mermaid
 flowchart LR
-  Q[用户问题] --> R[检索 + Query 改写]
-  R --> RT[Router<br/>fact / multi / chart]
-  RT --> T[工具链<br/>fact_qa / multi_page_qa / chart_qa]
-  T --> V[Verifier 可证性校验]
-  V -->|失败且开启 fallback| R
-  V --> A[答案 + citations + trace]
+  W[Workspace<br/>PDF/PPT/Word/Excel/CSV/TXT] --> P[Research Planner<br/>规则或 LLM]
+  P --> J[Research Job<br/>计划/步骤/取消/幂等]
+  J --> R[PageRetriever<br/>Rewrite + Hybrid + RRF]
+  R --> T[Tool Registry<br/>fact / multi-page / chart]
+  T --> V[Verifier<br/>证据校验 + 有限重试]
+  V --> E[Evidence / Findings]
+  E --> G[Report Generator<br/>Markdown + 安全 HTML]
 ```
 
 **单轮路径**：`src/pipeline.py` 内「先路由 → 再按分支 top-k 检索 → 工具 → 校验 → 可选扩召回 / 换分支重试」。  
@@ -58,6 +61,15 @@ flowchart LR
 | **评测** | `POST /eval/run` 离线跑样本集；`GET /eval/last` 读最近报告；报告落盘 `reports/eval/`（已 gitignore） |
 | **服务化** | FastAPI：`/ask`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
 | **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
+| **研究工作台** | Workspace 资料隔离、ResearchJob 计划/进度/取消、Evidence、Markdown/HTML 报告；SQLite 默认真源 |
+| **安全边界** | 上传白名单/大小限制/路径隔离、文档提示词注入防护、HTML 转义+CSP、资料目录默认不进入 Git/Docker context |
+| **可靠性** | 原子幂等提交、取消竞态保护、任务/工具超时、有界 dispatcher、workspace 引擎缓存失效、重启中断状态修复 |
+
+### 关于“千万日活”
+
+本仓库提供了面向大规模演进的接口边界（Milvus、Redis、OpenAI-compatible/vLLM、Prometheus、Dispatcher 抽象、Docker/GPU 拆分），但**当前开源默认形态是单机 SQLite + 进程内线程池，未做千万 DAU 压测，不能声称已承载千万日活**。
+
+若目标是千万级 DAU，需要在保持业务层接口不变的前提下，将 API 做无状态水平扩容，并替换为持久任务队列、分布式锁/幂等、对象存储、分片向量库、独立索引服务、网关鉴权与分布式限流，再通过容量模型、压测和故障演练给出可验证结论。README 不填写未经验证的 QPS、并发或准确率数字。
 
 ---
 
@@ -112,7 +124,7 @@ cd AI-Agent-RAG-Question-Answering
 cp .env.example .env
 ```
 
-编辑 `.env`，至少配置 **OpenAI 兼容** 对话接口：
+默认离线演示不要求模型 Key。需要模型规划、生成或真实 embedding 时，再配置 **OpenAI-compatible** 接口：
 
 | 变量 | 说明 |
 |------|------|
@@ -130,10 +142,21 @@ cp .env.example .env
 bash scripts/one_click_demo.sh
 ```
 
+默认是**纯本地离线模式**，不会把资料发送到远端模型 API。常用控制命令：
+
+```bash
+bash scripts/one_click_demo.sh --api       # 使用 .env 中的 OpenAI-compatible API
+bash scripts/one_click_demo.sh --full      # API + Redis + ColPali（需 Docker/GPU）
+bash scripts/one_click_demo.sh --status    # 查看状态
+bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
+```
+
+公网隧道默认关闭；确需临时分享时使用 `RAG_ENABLE_PUBLIC_TUNNEL=1 bash scripts/one_click_demo.sh`。
+
 | 模式 | 命令 | 说明 |
 |------|------|------|
 | 轻量（默认） | `bash scripts/one_click_demo.sh` | `RAG_LITE_MODE=1`：不拉 ColPali、不启 Docker Redis，关闭重型 embedding / rerank / Loop |
-| 全量链路 | `RAG_LITE_MODE=0 bash scripts/one_click_demo.sh` | ColPali + Redis 等（需本机或 GPU 云资源） |
+| 全量链路 | `bash scripts/one_click_demo.sh --full` | ColPali + Redis 等（需本机或 GPU 云资源） |
 
 **本地开发（热重载）**：
 
@@ -167,7 +190,7 @@ cp .env.example .env   # 填好 OPENAI_* 等
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 
-安全组放行 **8000**。
+如需远程访问，请先在网关增加鉴权、TLS、请求大小限制和租户隔离，再按需开放端口；本仓库 API 默认没有企业 RBAC/SSO，不应裸露到公网。
 
 #### 5.2 云端 GPU（ColPali + API 分容器）
 
@@ -248,6 +271,10 @@ bash scripts/one_click_demo.sh
 | `GET` | `/metrics` | Prometheus 指标（Router、Verifier、缓存、阶段延迟等） |
 | `POST` | `/eval/run` | 触发离线评测，可选落盘 `reports/eval/` |
 | `GET` | `/eval/last` | 读取最近一次评测报告 JSON |
+| `POST/GET/DELETE` | `/workspaces...` | 研究空间与资料管理 |
+| `POST/GET` | `/research/jobs...` | 提交、轮询、取消研究任务并获取报告 |
+
+研究架构、完整 API 示例、无 GPU 演示方式与生产边界见 [`docs/企业多模态研究Agent架构与API.md`](docs/企业多模态研究Agent架构与API.md)。
 
 ### 本地命令
 
@@ -277,6 +304,18 @@ python scripts/stage3_test_gate.py --base http://127.0.0.1:8000
 - **切勿**将 `.env`、密钥、私有文档或大体积模型推送到公开仓库。
 - **`private/`**、**`private.zip`**、本地实验目录 **`pythonProject1/`** 已在 `.gitignore` 中排除。
 - 生产环境请配合最小权限密钥、网络隔离与审计日志；本仓库以 **演示与研发** 为主。
+- 报告 HTML 使用受控转义和 CSP；上传资料与研究数据库默认排除在 Git 和 Docker 构建上下文之外。
+- 当前没有 RBAC、SSO 和多租户授权模型；公网部署必须在 API Gateway/反向代理层补齐认证授权。
+
+## 测试
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m compileall -q src offer_agent scripts main.py
+```
+
+测试覆盖即时问答兼容、Workspace 隔离、上传校验、Tool Registry、规则 Planner、LangGraph 闲聊分支、任务状态/取消竞态、并发幂等、工具超时、安全报告和完整研究 API 闭环。
 
 ---
 

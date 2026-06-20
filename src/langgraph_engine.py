@@ -43,6 +43,7 @@ class QAState(TypedDict, total=False):
     should_finish: bool
     skip_memory_write: bool
     low_confidence: bool
+    forced_branch: str
 
 
 @dataclass
@@ -115,17 +116,17 @@ class LangGraphQAEngine:
         query = state["query"]
         if not self._base._is_smalltalk_query(query):
             return {"should_finish": False}
-            result = QAResult(
-                query=query,
-                rewritten_query=query,
-                branch=RouterAgent.BRANCH_FACT,
-                answer=self._base._fallback_smalltalk_answer(),
+        result = QAResult(
+            query=query,
+            rewritten_query=query,
+            branch=RouterAgent.BRANCH_FACT,
+            answer=self._base._fallback_smalltalk_answer(),
             verified=False,
-                hits=[],
-                retry_hits=None,
-                source_files=[],
-                citation_details=[],
-                trace=AgentTrace(
+            hits=[],
+            retry_hits=None,
+            source_files=[],
+            citation_details=[],
+            trace=AgentTrace(
                 route_branch=RouterAgent.BRANCH_FACT,
                 fallback_triggered=False,
                 retry_reason="smalltalk_blocked",
@@ -139,7 +140,7 @@ class LangGraphQAEngine:
         }
 
     def _cache_lookup(self, state: QAState) -> QAState:
-        if not SETTINGS.enable_session_cache:
+        if not SETTINGS.enable_session_cache or state.get("forced_branch"):
             return {"should_finish": False}
         cached = self.memory.try_get(state["session_id"], state["query"])
         if cached is None:
@@ -154,7 +155,10 @@ class LangGraphQAEngine:
         import time
 
         t0 = time.perf_counter()
-        route_branch = self.router.route(state["query"])
+        forced=state.get("forced_branch","")
+        allowed={RouterAgent.BRANCH_FACT,RouterAgent.BRANCH_MULTI,RouterAgent.BRANCH_CHART}
+        if forced and forced not in allowed: raise ValueError(f"unsupported forced branch: {forced}")
+        route_branch = forced or self.router.route(state["query"])
         route_cost = int((time.perf_counter() - t0) * 1000)
         traces = list(state.get("stage_traces", []))
         traces.append(StageTrace(stage="route", elapsed_ms=route_cost, detail={"branch": route_branch}))
@@ -398,7 +402,7 @@ class LangGraphQAEngine:
         )
         return {"verified": verified, "stage_traces": traces}
 
-    def ask(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default") -> QAResult:
+    def ask(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default", forced_branch: str = "") -> QAResult:
         state: QAState = {
             "query": query,
             "session_id": session_id,
@@ -420,6 +424,7 @@ class LangGraphQAEngine:
             "should_finish": False,
             "skip_memory_write": False,
             "low_confidence": False,
+            "forced_branch": forced_branch,
         }
         out = self._graph.invoke(state)
         cached = out.get("cache_result")

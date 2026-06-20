@@ -34,20 +34,32 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.responses import FileResponse, Response
 import sentry_sdk
 
-from .bootstrap import build_agent_loop, build_engine
+from .agent_loop import PlanExecuteAgentLoop
+from .bootstrap import build_engine
 from .config import SETTINGS
 from .middleware_ops import RateLimitMiddleware, RequestTimingMiddleware
 from .router import router_circuit_open
 from .services import vlm_circuit_open
 from .eval_suite import DEFAULT_EVAL_SAMPLES, run_eval_report
 from .infra.eval_report_store import load_latest_eval_report, save_eval_report
+from .infra.document_ingest import ingest_document
+from .infra.research_repository import SQLiteResearchRepository
+from .infra.redis_memory import RedisSessionMemory
+from .infra.vector_store import MilvusVectorStore
+from .research import InProcessJobDispatcher, RESEARCH_JOBS, ResearchExecutor
+from .research_models import ResearchJob, to_dict, utc_now
+import os
+import re
+import shutil
+import uuid
+import zipfile
 
 # 指标：总请求、耗时、回退、路由、校验、缓存、阶段耗时
 REQ_COUNT = Counter("rag_requests_total", "Total requests", ["branch", "verified"])
@@ -59,6 +71,8 @@ CACHE_HIT_COUNT = Counter("rag_cache_hit_total", "Session cache hit totals")
 RETRY_REASON_COUNT = Counter("rag_retry_reason_total", "Retry reason totals", ["reason"])
 STAGE_LATENCY = Histogram("rag_stage_latency_seconds", "Per stage latency", ["stage"])
 EVAL_RUN_COUNT = Counter("rag_eval_run_total", "Offline eval run totals")
+DOCUMENT_INGEST = Counter("rag_document_ingest_total", "Document ingest", ["status", "type"])
+DOCUMENT_INGEST_DURATION = Histogram("rag_document_ingest_duration_seconds", "Document ingest duration", ["type"])
 app = FastAPI(title="Visual RAG Agent API", version="0.1.0")
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -70,15 +84,18 @@ if SETTINGS.sentry_dsn:
     )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[x.strip() for x in SETTINGS.cors_origins.split(",") if x.strip()],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 _user_pages = Path("data/user_pages.json")
 _data_path = str(_user_pages) if _user_pages.exists() else "data/demo_pages.json"
 engine = build_engine(_data_path)
-agent_loop = build_agent_loop(_data_path)
+agent_loop = PlanExecuteAgentLoop(engine=engine, max_loops=2)
+research_repository = SQLiteResearchRepository(os.getenv("RAG_RESEARCH_DB", "data/research/research.db"))
+research_executor = ResearchExecutor(research_repository)
+research_dispatcher = InProcessJobDispatcher(research_executor)
 
 
 class AskRequest(BaseModel):
@@ -87,6 +104,20 @@ class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, description="用户问题")
     session_id: str = Field(default="default", min_length=1, max_length=128, description="会话 ID")
     topk: Optional[int] = Field(default=None, ge=1, le=20, description="可选 top-k")
+    workspace_id: Optional[str] = Field(default=None, description="可选研究空间；传入后严格限制资料范围")
+
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
+    use_demo: bool = Field(default=True, description="是否把内置 demo pages 纳入本空间")
+
+
+class ResearchJobRequest(BaseModel):
+    workspace_id: str
+    objective: str = Field(..., min_length=3, max_length=4000)
+    session_id: str = Field(default="research", max_length=128)
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
 
 
 class AskResponse(BaseModel):
@@ -142,7 +173,7 @@ def capabilities() -> Dict[str, Any]:
     """企业级能力接入状态。"""
     return {
         "multimodal_embedding": bool(SETTINGS.enable_multimodal_embedding and SETTINGS.multimodal_embedding_api),
-        "milvus": SETTINGS.vector_backend == "milvus",
+        "milvus": isinstance(engine.retriever.vector_store, MilvusVectorStore),
         "colpali_rerank": bool(SETTINGS.enable_colpali_rerank and SETTINGS.colpali_rerank_api),
         "function_calling_router": bool(SETTINGS.enable_function_calling_router and SETTINGS.openai_api_key),
         "langgraph": SETTINGS.enable_langgraph,
@@ -156,8 +187,12 @@ def capabilities() -> Dict[str, Any]:
         "vlm_circuit_open": vlm_circuit_open(),
         "local_colpali_model": Path(SETTINGS.colpali_model_dir).exists(),
         "local_colpali_model_dir": SETTINGS.colpali_model_dir,
-        "redis_memory": SETTINGS.session_backend == "redis",
+        "redis_memory": isinstance(engine.memory, RedisSessionMemory),
         "session_cache": SETTINGS.enable_session_cache,
+        "workspace": True,
+        "research_jobs": True,
+        "report_generation": True,
+        "job_backend": "in_process_thread_pool",
         "agentic_query_expansion": SETTINGS.enable_query_expansion,
         "agentic_retry_refine": SETTINGS.enable_agentic_retry_refine,
         "benchmark": {
@@ -166,6 +201,175 @@ def capabilities() -> Dict[str, Any]:
             "router_accuracy": SETTINGS.benchmark_router_accuracy,
         },
     }
+
+
+def _not_found(kind: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"code":f"{kind}_not_found","message":f"{kind} not found"})
+
+
+def _validate_document_container(path: Path, suffix: str) -> None:
+    max_pages=int(os.getenv("RAG_UPLOAD_MAX_PAGES","500"))
+    max_uncompressed=int(os.getenv("RAG_UPLOAD_MAX_UNCOMPRESSED_BYTES",str(200*1024*1024)))
+    if suffix in {".docx",".xlsx",".pptx"}:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                infos=archive.infolist()
+                if len(infos)>10000 or sum(x.file_size for x in infos)>max_uncompressed:
+                    raise HTTPException(413,detail={"code":"document_too_large","message":"office document expands beyond safe limits"})
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(400,detail={"code":"invalid_file","message":"invalid office container"}) from exc
+    if suffix==".pdf":
+        try:
+            import fitz
+            with fitz.open(str(path)) as pdf:
+                if pdf.page_count>max_pages:
+                    raise HTTPException(413,detail={"code":"too_many_pages","message":f"maximum {max_pages} pages"})
+        except HTTPException: raise
+        except Exception as exc:
+            raise HTTPException(400,detail={"code":"invalid_file","message":"invalid PDF"}) from exc
+
+
+@app.post("/workspaces", status_code=201)
+def create_workspace(req: WorkspaceCreateRequest) -> Dict[str, Any]:
+    return research_repository.create_workspace(req.name.strip(), req.description.strip(), req.use_demo)
+
+
+@app.get("/workspaces")
+def list_workspaces() -> List[Dict[str, Any]]: return research_repository.list_workspaces()
+
+
+@app.get("/workspaces/{workspace_id}")
+def get_workspace(workspace_id: str) -> Dict[str, Any]:
+    ws=research_repository.get_workspace(workspace_id)
+    if not ws: raise _not_found("workspace")
+    ws["documents"]=research_repository.list_documents(workspace_id); return ws
+
+
+@app.delete("/workspaces/{workspace_id}", status_code=204)
+def delete_workspace(workspace_id: str) -> Response:
+    ws=research_repository.get_workspace(workspace_id)
+    if not ws: raise _not_found("workspace")
+    if research_repository.has_active_jobs(workspace_id):
+        raise HTTPException(409,detail={"code":"workspace_busy","message":"cancel or finish active research jobs before deleting workspace"})
+    # 级联删除数据库记录；上传文件位于独立空间目录并一并清理。
+    research_repository.delete_workspace(workspace_id)
+    research_executor.invalidate_workspace(workspace_id)
+    shutil.rmtree(Path("data/research/uploads")/workspace_id,ignore_errors=True)
+    return Response(status_code=204)
+
+
+@app.get("/workspaces/{workspace_id}/documents")
+def list_documents(workspace_id: str) -> List[Dict[str, Any]]:
+    if not research_repository.get_workspace(workspace_id): raise _not_found("workspace")
+    return research_repository.list_documents(workspace_id)
+
+
+@app.post("/workspaces/{workspace_id}/documents", status_code=201)
+def upload_document(workspace_id: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+    if not research_repository.get_workspace(workspace_id): raise _not_found("workspace")
+    raw_name=file.filename or ""
+    if "/" in raw_name or "\\" in raw_name: raise HTTPException(400,detail={"code":"invalid_file","message":"path components are forbidden"})
+    original=Path(raw_name).name
+    safe=re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fff]","_",original)
+    suffix=Path(safe).suffix.lower(); allowed={".pdf",".docx",".xlsx",".csv",".pptx",".txt",".doc",".xls",".ppt"}
+    if not safe or safe in {".",".."} or suffix not in allowed: raise HTTPException(400,detail={"code":"invalid_file","message":"unsupported or unsafe filename"})
+    max_bytes=int(os.getenv("RAG_UPLOAD_MAX_BYTES",str(20*1024*1024))); content=file.file.read(max_bytes+1)
+    if len(content)>max_bytes: raise HTTPException(413,detail={"code":"file_too_large","message":f"maximum {max_bytes} bytes"})
+    document_id=uuid.uuid4().hex; folder=Path("data/research/uploads")/workspace_id/document_id; folder.mkdir(parents=True,exist_ok=True); target=folder/safe
+    target.write_bytes(content); now=utc_now()
+    ingest_started=time.perf_counter()
+    try:
+        _validate_document_container(target,suffix)
+        pages=ingest_document(str(target),document_id,image_output_dir=str(folder/"pages"))
+        max_pages=int(os.getenv("RAG_UPLOAD_MAX_PAGES","500"))
+        if len(pages)>max_pages: raise ValueError(f"document exceeds maximum {max_pages} pages")
+        for p in pages: p.metadata["workspace_id"]=workspace_id; p.metadata["untrusted_context"]="true"
+        payloads=[p.__dict__ for p in pages]; status,error="ready",""
+    except HTTPException:
+        shutil.rmtree(folder,ignore_errors=True)
+        DOCUMENT_INGEST.labels(status="rejected",type=suffix.lstrip(".")).inc()
+        raise
+    except Exception as exc:
+        payloads=[]; status,error="failed",str(exc)[:500]
+    doc={"document_id":document_id,"workspace_id":workspace_id,"file_name":safe,"source_path":str(target),"content_type":file.content_type or suffix,"status":status,"page_count":len(payloads),"error_message":error,"created_at":now,"updated_at":utc_now()}
+    try:
+        research_repository.add_document(doc,payloads)
+        research_executor.invalidate_workspace(workspace_id)
+    except Exception:
+        shutil.rmtree(folder,ignore_errors=True)
+        raise
+    DOCUMENT_INGEST.labels(status=status,type=suffix.lstrip(".")).inc()
+    DOCUMENT_INGEST_DURATION.labels(type=suffix.lstrip(".")).observe(time.perf_counter()-ingest_started)
+    if status=="failed": raise HTTPException(422,detail={"code":"ingest_failed","message":error})
+    return doc
+
+
+@app.delete("/workspaces/{workspace_id}/documents/{document_id}", status_code=204)
+def delete_document(workspace_id: str, document_id: str) -> Response:
+    if research_repository.has_active_jobs(workspace_id):
+        raise HTTPException(409,detail={"code":"workspace_busy","message":"cancel or finish active research jobs before deleting documents"})
+    path=research_repository.delete_document(workspace_id,document_id)
+    if path is None: raise _not_found("document")
+    research_executor.invalidate_workspace(workspace_id)
+    shutil.rmtree(Path(path).parent,ignore_errors=True); return Response(status_code=204)
+
+
+@app.post("/research/jobs", status_code=202)
+def submit_research(req: ResearchJobRequest) -> Dict[str, Any]:
+    if not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
+    job=ResearchJob(job_id=uuid.uuid4().hex,workspace_id=req.workspace_id,session_id=req.session_id,objective=req.objective.strip(),idempotency_key=req.idempotency_key)
+    payload,created=research_repository.create_job(to_dict(job))
+    if not created: return payload
+    if not research_dispatcher.submit(job.job_id):
+        payload.update(status="failed",error_message="research dispatcher queue is full",finished_at=utc_now())
+        research_repository.save_job(payload)
+        raise HTTPException(503,detail={"code":"dispatcher_busy","message":"research queue is full; retry later"})
+    RESEARCH_JOBS.labels(status="submitted").inc(); return payload
+
+
+@app.get("/research/jobs/{job_id}")
+def get_research_job(job_id: str) -> Dict[str, Any]:
+    job=research_repository.get_job(job_id)
+    if not job: raise _not_found("research_job")
+    return job
+
+
+@app.post("/research/jobs/{job_id}/cancel")
+def cancel_research_job(job_id: str) -> Dict[str, Any]:
+    if not research_repository.get_job(job_id): raise _not_found("research_job")
+    if not research_repository.request_cancel(job_id): raise HTTPException(409,detail={"code":"state_conflict","message":"job can no longer be cancelled"})
+    RESEARCH_JOBS.labels(status="cancelled").inc()
+    return research_repository.get_job(job_id) or {}
+
+
+def _report_or_409(job_id: str) -> Dict[str, Any]:
+    job=research_repository.get_job(job_id)
+    if not job: raise _not_found("research_job")
+    if job.get("status") != "completed": raise HTTPException(409,detail={"code":"report_not_ready","message":"report is only available for completed jobs"})
+    report=research_repository.get_report(job_id)
+    if not report: raise HTTPException(409,detail={"code":"report_not_ready","message":"report is not ready"})
+    return report
+
+
+@app.get("/research/jobs/{job_id}/report")
+def get_report(job_id: str) -> Dict[str, Any]: return _report_or_409(job_id)
+
+
+@app.get("/research/jobs/{job_id}/report.md")
+def get_report_markdown(job_id: str) -> Response:
+    report=_report_or_409(job_id); return Response(report["markdown_content"],media_type="text/markdown",headers={"Content-Disposition":f"attachment; filename={job_id}.md"})
+
+
+@app.get("/research/jobs/{job_id}/report.html")
+def get_report_html(job_id: str) -> Response:
+    return Response(
+        _report_or_409(job_id)["html_content"],
+        media_type="text/html",
+        headers={
+            "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+            "X-Content-Type-Options":"nosniff",
+        },
+    )
 
 
 @app.get("/metrics")
@@ -230,8 +434,14 @@ def ask(req: AskRequest) -> AskResponse:
     start = time.perf_counter()
     loop_steps: Optional[List[Dict[str, Any]]] = None
     sid = req.session_id
+    response_engine = engine
     try:
-        if SETTINGS.enable_plan_execute_loop:
+        if req.workspace_id:
+            if not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
+            scoped_engine=research_executor.build_workspace_engine(req.workspace_id)
+            response_engine=scoped_engine
+            result=scoped_engine.ask(req.query,topk=req.topk or SETTINGS.topk_default,session_id=sid)
+        elif SETTINGS.enable_plan_execute_loop:
             loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid)
             result = loop_run.result
             loop_steps = [
@@ -273,7 +483,7 @@ def ask(req: AskRequest) -> AskResponse:
             STAGE_LATENCY.labels(stage=st.stage).observe(max(st.elapsed_ms, 0) / 1000.0)
 
     def _hit_payload(hit) -> Dict[str, Any]:
-        page = engine.retriever.get_page(hit.page_id)
+        page = response_engine.retriever.get_page(hit.page_id)
         meta = page.metadata or {}
         title = meta.get("title") or meta.get("sheet_name") or ""
         source_file = Path(page.source_file).name if page.source_file else page.doc_id

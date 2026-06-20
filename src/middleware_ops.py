@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from typing import Callable
 
 from fastapi import Request, Response
@@ -15,16 +16,31 @@ from .resilience import TokenBucket
 
 RATE_LIMIT_REJECT = Counter("rag_rate_limit_total", "Rate limit rejections on /ask")
 
-_ASK_BUCKET = TokenBucket(
-    rate_per_sec=SETTINGS.rate_limit_rps,
-    capacity=float(SETTINGS.rate_limit_burst),
-)
+_BUCKETS = {}
+_BUCKETS_LOCK = threading.Lock()
+_MAX_BUCKETS = 10000
+
+
+def _bucket_for(client_key: str) -> TokenBucket:
+    with _BUCKETS_LOCK:
+        bucket = _BUCKETS.get(client_key)
+        if bucket is None:
+            if len(_BUCKETS) >= _MAX_BUCKETS:
+                # 演示实现使用有界内存；生产应替换为网关或 Redis 分布式限流。
+                _BUCKETS.pop(next(iter(_BUCKETS)))
+            bucket = TokenBucket(rate_per_sec=SETTINGS.rate_limit_rps, capacity=float(SETTINGS.rate_limit_burst))
+            _BUCKETS[client_key] = bucket
+        return bucket
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path == "/ask" and SETTINGS.enable_rate_limit:
-            if not _ASK_BUCKET.allow():
+        protected = request.url.path == "/ask" or request.url.path == "/research/jobs" or (
+            request.method == "POST" and request.url.path.endswith("/documents")
+        )
+        if protected and SETTINGS.enable_rate_limit:
+            client_key = request.client.host if request.client else "unknown"
+            if not _bucket_for(client_key).allow():
                 RATE_LIMIT_REJECT.inc()
                 return Response(
                     content='{"detail":"rate limit exceeded, retry later"}',

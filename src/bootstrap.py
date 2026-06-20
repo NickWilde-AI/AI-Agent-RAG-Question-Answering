@@ -26,7 +26,7 @@ bootstrap.py — 依赖组装（Dependency Injection / 工厂方法）
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List, Optional
 
 from .agent_loop import PlanExecuteAgentLoop
 from .config import SETTINGS
@@ -34,22 +34,15 @@ from .infra.redis_memory import RedisSessionMemory
 from .langgraph_engine import LangGraphQAEngine
 from .llm_client import LLMClient
 from .memory import SessionMemory
+from .models import Page
 from .pipeline import QAEngine
 from .retriever import PageRetriever
 from .router import RouterAgent
 from .verifier import Verifier
 
 
-def build_engine(data_path: str = "data/demo_pages.json") -> Any:
-    """
-    构建 QAEngine。
-
-    为什么单独做 bootstrap：
-    - main.py、API 服务都要用同一套初始化逻辑
-    - 面试时可强调“依赖组装集中管理”，避免散落在多个入口文件
-    """
-    llm_client = LLMClient.from_settings()
-    retriever = PageRetriever.from_json(data_path, llm_client=llm_client)
+def _assemble_engine(retriever: PageRetriever, llm_client: LLMClient) -> Any:
+    """组装引擎，确保文件加载和 workspace 内存页面走同一条依赖链。"""
     mem_kw = {
         "max_history": SETTINGS.session_max_history,
         "cache_verified_only": SETTINGS.session_cache_require_verified,
@@ -69,19 +62,27 @@ def build_engine(data_path: str = "data/demo_pages.json") -> Any:
 
     router = RouterAgent(llm_client=llm_client)
     verifier = Verifier(llm_client=llm_client)
-    if SETTINGS.enable_langgraph:
-        return LangGraphQAEngine(
-            retriever=retriever,
-            router=router,
-            memory=memory,
-            verifier=verifier,
-        )
-    return QAEngine(
-        retriever=retriever,
-        router=router,
-        memory=memory,
-        verifier=verifier,
-    )
+    engine_cls = LangGraphQAEngine if SETTINGS.enable_langgraph else QAEngine
+    return engine_cls(retriever=retriever, router=router, memory=memory, verifier=verifier)
+
+
+def build_engine(data_path: str = "data/demo_pages.json") -> Any:
+    """
+    构建 QAEngine。
+
+    为什么单独做 bootstrap：
+    - main.py、API 服务都要用同一套初始化逻辑
+    - 面试时可强调“依赖组装集中管理”，避免散落在多个入口文件
+    """
+    llm_client = LLMClient.from_settings()
+    retriever = PageRetriever.from_json(data_path, llm_client=llm_client)
+    return _assemble_engine(retriever, llm_client)
+
+
+def build_engine_from_pages(pages: List[Page], llm_client: Optional[LLMClient] = None) -> Any:
+    """直接从隔离后的页面构建引擎，避免 workspace 并发写临时 JSON。"""
+    client = llm_client or LLMClient.from_settings()
+    return _assemble_engine(PageRetriever(pages=pages, llm_client=client), client)
 
 
 def build_agent_loop(data_path: str = "data/demo_pages.json") -> PlanExecuteAgentLoop:

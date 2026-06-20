@@ -4,12 +4,72 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # 一键入口：依赖安装 → user_docs 建库 → 启动 API（日常只跑本脚本即可）。
+#
+#   bash scripts/one_click_demo.sh             # 默认纯本地离线，不请求模型 API
+#   bash scripts/one_click_demo.sh --api       # 使用 .env 中 OpenAI-compatible API
+#   bash scripts/one_click_demo.sh --full      # API + Redis + 本地 ColPali（需 Docker/GPU）
+#   bash scripts/one_click_demo.sh --status    # 查看服务状态
+#   bash scripts/one_click_demo.sh --stop      # 停止本脚本启动的服务
 # 可选环境变量：
 #   RAG_FORCE_REBUILD_KB=1  清空 data/user_pages.json、manifest、kb_pages 后全量重建
 #   RAG_SKIP_INDEX_BUILD=1  跳过建库，沿用已有索引
 #   RAG_LITE_MODE=0         启用 ColPali + Redis 全量链路
-# 轻量模式尊重 .env 中 RAG_ENABLE_REAL_EMBEDDING；大库逐页 embedding 启动较慢，见 logs/api.log
+# 公网隧道默认关闭；确需临时分享时显式设置 RAG_ENABLE_PUBLIC_TUNNEL=1。
 : "${RAG_LITE_MODE:=1}"
+: "${RAG_OFFLINE_MODE:=1}"
+: "${RAG_ENABLE_PUBLIC_TUNNEL:=0}"
+
+ACTION="start"
+for arg in "$@"; do
+  case "$arg" in
+    --offline) RAG_OFFLINE_MODE=1 ;;
+    --api) RAG_OFFLINE_MODE=0 ;;
+    --full) RAG_OFFLINE_MODE=0; RAG_LITE_MODE=0 ;;
+    --skip-index) RAG_SKIP_INDEX_BUILD=1 ;;
+    --status) ACTION="status" ;;
+    --stop) ACTION="stop" ;;
+    -h|--help)
+      sed -n '5,17p' "$0"
+      exit 0
+      ;;
+    *) echo "未知参数: $arg（使用 --help 查看用法）" >&2; exit 2 ;;
+  esac
+done
+
+mkdir -p logs
+
+service_pid() {
+  local file="$1"
+  [ -f "$file" ] && tr -dc '0-9' < "$file" || true
+}
+
+stop_pid_file() {
+  local file="$1" name="$2" pid
+  pid="$(service_pid "$file")"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    echo "已停止 ${name}（PID ${pid}）"
+  fi
+  rm -f "$file"
+}
+
+if [ "$ACTION" = "status" ]; then
+  if curl -fsS --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    echo "✅ API 正在运行: http://127.0.0.1:8000/chat"
+    curl -fsS http://127.0.0.1:8000/capabilities || true
+    echo
+  else
+    echo "⏹ API 未运行"
+  fi
+  exit 0
+fi
+
+if [ "$ACTION" = "stop" ]; then
+  stop_pid_file logs/api.pid "FastAPI"
+  stop_pid_file logs/colpali.pid "ColPali"
+  stop_pid_file logs/cloudflared.pid "cloudflared"
+  exit 0
+fi
 
 # pip：访问 pypi.org 若出现 SSLEOFError / 超时，默认走清华镜像；强制官方源：RAG_USE_PYPI_MIRROR=0
 : "${RAG_USE_PYPI_MIRROR:=1}"
@@ -20,29 +80,39 @@ if [ "${RAG_USE_PYPI_MIRROR}" = "1" ]; then
   echo "== pip 使用镜像: ${RAG_PIP_MIRROR}（官方源请设 RAG_USE_PYPI_MIRROR=0）=="
 fi
 
-mkdir -p logs
-
 free_port() {
   local port="$1"
   local pids
   pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
   if [ -n "$pids" ]; then
     echo "端口 $port 被占用，正在回收进程: $pids"
-    kill -9 $pids >/dev/null 2>&1 || true
+    kill $pids >/dev/null 2>&1 || true
     sleep 1
   fi
 }
 
 echo "== 准备 Python 环境（RAG_LITE_MODE=${RAG_LITE_MODE}）=="
-if [ ! -d ".venv" ]; then
-  python3 -m venv .venv
+VENV_DIR=".venv"
+if [ -d "$VENV_DIR" ] && ! "$VENV_DIR/bin/python" -c 'import sys' >/dev/null 2>&1; then
+  VENV_DIR=".venv-runtime"
+  echo "检测到旧 .venv 已失效（通常由仓库移动导致），改用 ${VENV_DIR}，不删除旧环境。"
 fi
-source .venv/bin/activate
-python -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
-python -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
-python -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  python3 -m venv "$VENV_DIR"
+fi
+# 不 source activate：其绝对路径会在仓库搬家后失效。直接固定当前仓库解释器。
+export VIRTUAL_ENV="$PWD/$VENV_DIR"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+PYTHON="$VENV_DIR/bin/python"
+"$PYTHON" -m pip install -U pip "${PIP_INDEX_ARGS[@]}" >/dev/null
+"$PYTHON" -m pip install -r requirements.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+"$PYTHON" -m pip install socksio "${PIP_INDEX_ARGS[@]}" >/dev/null
+if ! "$PYTHON" -c 'import fastapi, multipart, uvicorn' >/dev/null 2>&1; then
+  echo "依赖安装不完整（需要 fastapi/python-multipart/uvicorn），请查看上方 pip 输出。" >&2
+  exit 1
+fi
 if [ "${RAG_LITE_MODE}" = "0" ]; then
-  python -m pip install -r requirements/colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
+  "$PYTHON" -m pip install -r requirements/colpali.txt "${PIP_INDEX_ARGS[@]}" >/dev/null
 fi
 
 if [ "${RAG_LITE_MODE}" != "0" ]; then
@@ -60,9 +130,28 @@ echo "== 载入环境变量 =="
 set -a
 # shellcheck disable=SC1091
 set +u
-source .env
+if [ -f .env ]; then
+  source .env
+else
+  echo "未发现 .env；复制 .env.example 作为本地默认配置。"
+  cp .env.example .env
+  source .env
+fi
 set -u
 set +a
+
+if [ "$RAG_OFFLINE_MODE" = "1" ]; then
+  # 默认演示不把文档内容发送到任何远端模型或服务。
+  export OPENAI_API_KEY="" OAPI_API_KEY=""
+  export RAG_ENABLE_REAL_EMBEDDING=false
+  export RAG_ENABLE_LLM_ROUTER=false RAG_ENABLE_LLM_VERIFIER=false RAG_ENABLE_FUNCTION_CALLING_ROUTER=false
+  export RAG_ENABLE_MULTIMODAL_EMBEDDING=false RAG_ENABLE_COLPALI_RERANK=false
+  export RAG_MULTIMODAL_EMBEDDING_API="" RAG_COLPALI_RERANK_API="" RAG_VLM_API="" RAG_CHART_PARSING_API=""
+  export RAG_VECTOR_BACKEND=inmemory RAG_SESSION_BACKEND=memory
+  echo "运行模式：纯本地离线（规则规划 + 哈希/BM25 检索 + demo fallback，不调用远端模型 API）"
+else
+  echo "运行模式：API（使用 .env 中显式配置的 OpenAI-compatible 服务）"
+fi
 # 可选变量：.env 未声明时给默认值，避免 set -u 与后续命令报错
 RAG_BUILD_DPI="${RAG_BUILD_DPI:-144}"
 RAG_SKIP_INDEX_BUILD="${RAG_SKIP_INDEX_BUILD:-0}"
@@ -70,7 +159,7 @@ RAG_SKIP_INDEX_BUILD="${RAG_SKIP_INDEX_BUILD:-0}"
 mkdir -p user_docs kb_pages data
 
 run_index_build() {
-  python scripts/build_index_incremental.py \
+  "$PYTHON" scripts/build_index_incremental.py \
     --input-dir user_docs \
     --output-pages data/user_pages.json \
     --manifest data/index_manifest.json \
@@ -81,7 +170,7 @@ run_index_build() {
 }
 
 count_user_docs() {
-  python - <<'PY'
+  "$PYTHON" - <<'PY'
 from pathlib import Path
 exts = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".pptx", ".ppt", ".txt"}
 root = Path("user_docs")
@@ -90,7 +179,7 @@ PY
 }
 
 count_index_pages() {
-  python - <<'PY'
+  "$PYTHON" - <<'PY'
 import json
 from pathlib import Path
 p = Path("data/user_pages.json")
@@ -151,7 +240,8 @@ else
   echo "== 启动 ColPali rerank 服务 =="
   pkill -f "uvicorn scripts.colpali_rerank_service:app" >/dev/null 2>&1 || true
   free_port 9001
-  nohup .venv/bin/python -m uvicorn scripts.colpali_rerank_service:app --host 127.0.0.1 --port 9001 > logs/colpali.log 2>&1 &
+  nohup "$VENV_DIR/bin/python" -m uvicorn scripts.colpali_rerank_service:app --host 127.0.0.1 --port 9001 > logs/colpali.log 2>&1 &
+  echo $! > logs/colpali.pid
 fi
 
 echo "== 启动 FastAPI 主服务 =="
@@ -160,7 +250,7 @@ free_port 8000
 
 REAL_EMB="${RAG_ENABLE_REAL_EMBEDDING:-false}"
 if [ "${REAL_EMB}" = "true" ] || [ "${REAL_EMB}" = "1" ]; then
-  page_count="$(python - <<'PY'
+  page_count="$("$PYTHON" - <<'PY'
 import json
 from pathlib import Path
 for p in (Path("data/user_pages.json"), Path("data/demo_pages.json")):
@@ -186,15 +276,16 @@ if [ "${RAG_LITE_MODE}" != "0" ]; then
     RAG_ENABLE_COLPALI_RERANK=false \
     RAG_COLPALI_RERANK_API= \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
-    .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
+    "$VENV_DIR/bin/python" -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 else
   nohup env PYTHONUNBUFFERED=1 \
     RAG_ENABLE_MULTIMODAL_EMBEDDING=false \
     RAG_ENABLE_PLAN_EXECUTE_LOOP=false \
     RAG_ENABLE_COLPALI_RERANK=true \
     RAG_COLPALI_RERANK_API=http://127.0.0.1:9001/rerank \
-    .venv/bin/python -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
+    "$VENV_DIR/bin/python" -m uvicorn offer_agent.api:app --host 0.0.0.0 --port 8000 > logs/api.log 2>&1 &
 fi
+echo $! > logs/api.pid
 
 # 真实 embedding 建索引较慢，按页数延长健康检查等待
 health_wait=30
@@ -252,13 +343,14 @@ else
   fi
 fi
 
-if command -v cloudflared >/dev/null 2>&1; then
+if [ "$RAG_ENABLE_PUBLIC_TUNNEL" = "1" ] && command -v cloudflared >/dev/null 2>&1; then
   echo ""
   echo "== 公网临时隧道（cloudflared）=="
   pkill -f "cloudflared tunnel --url http://127.0.0.1:8000" >/dev/null 2>&1 || true
   nohup cloudflared tunnel --url http://127.0.0.1:8000 > logs/cloudflared.log 2>&1 &
+  echo $! > logs/cloudflared.pid
   for _ in $(seq 1 35); do
-    CF_PUBLIC_URL="$(python - <<'PY'
+    CF_PUBLIC_URL="$("$PYTHON" - <<'PY'
 from pathlib import Path
 import re
 p = Path("logs/cloudflared.log")
@@ -277,7 +369,7 @@ PY
   if [ -z "$CF_PUBLIC_URL" ]; then
     echo "隧道已后台启动，若下面未显示公网地址，请稍后执行: grep trycloudflare logs/cloudflared.log"
   fi
-else
+elif [ "$RAG_ENABLE_PUBLIC_TUNNEL" = "1" ]; then
   echo ""
   echo "（未安装 cloudflared，仅本地访问。公网分享请: brew install cloudflared 后重跑本脚本）"
 fi

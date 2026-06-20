@@ -20,6 +20,7 @@ Android 类比：
 
 import json
 import re
+import threading
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
@@ -103,6 +104,7 @@ class SessionMemory:
     _history: Dict[str, List[QAResult]] = field(
         default_factory=lambda: defaultdict[str, List[QAResult]](list), init=False, repr=False
     )
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
 
     def try_get(self, session_id: str, query: str) -> Optional[QAResult]:
         """
@@ -112,7 +114,8 @@ class SessionMemory:
         未命中：返回 None，继续走 retrieve → 生成 → 校验。
         """
         norm = normalize_query(query)
-        entry = self._entries.get(session_id, {}).get(norm)
+        with self._lock:
+            entry = self._entries.get(session_id, {}).get(norm)
         if entry is None:
             return None
         return entry.to_qa_result()
@@ -126,18 +129,19 @@ class SessionMemory:
            - 非 cache_hit（避免缓存套缓存）
            - cache_verified_only 时要求 result.verified
         """
-        hist = self._history[session_id]
-        hist.append(result)
-        if len(hist) > self.max_history:
-            self._history[session_id] = hist[-self.max_history :]
+        with self._lock:
+            hist = self._history[session_id]
+            hist.append(result)
+            if len(hist) > self.max_history:
+                self._history[session_id] = hist[-self.max_history :]
 
-        if result.branch == "cache_hit":
-            return
-        if self.cache_verified_only and not result.verified:
-            return
+            if result.branch == "cache_hit":
+                return
+            if self.cache_verified_only and not result.verified:
+                return
 
-        norm = normalize_query(result.query)
-        self._entries[session_id][norm] = SessionCacheEntry.from_qa_result(result, norm)
+            norm = normalize_query(result.query)
+            self._entries[session_id][norm] = SessionCacheEntry.from_qa_result(result, norm)
 
     def get_cached_pages(self, query: str, session_id: str = "default") -> List[str]:
         """
@@ -145,7 +149,8 @@ class SessionMemory:
         主链路用 try_get 返回整包答案；若将来「只跳过检索、仍重新生成」可用本方法。
         """
         norm = normalize_query(query)
-        entry = self._entries.get(session_id, {}).get(norm)
+        with self._lock:
+            entry = self._entries.get(session_id, {}).get(norm)
         return list(entry.page_ids) if entry else []
 
     def get_recent_history(self, session_id: str = "default", limit: int = 5) -> List[QAResult]:
@@ -153,7 +158,8 @@ class SessionMemory:
         【辅助·读】最近 N 条问答时间线。不负责 cache_hit 短路。
         用途：多轮对话 UI、get_context_snippet、后续 Router 注入历史。
         """
-        return self._history.get(session_id, [])[-limit:]
+        with self._lock:
+            return list(self._history.get(session_id, [])[-limit:])
 
     def get_context_snippet(self, session_id: str = "default", limit: int = 3) -> str:
         """把最近几条 QA 拼成短文本，可塞进 LLM / Router 的 system prompt。"""
@@ -164,5 +170,6 @@ class SessionMemory:
 
     def clear_session(self, session_id: str = "default") -> None:
         """清空某会话的缓存与历史（文档更新、用户登出等场景）。"""
-        self._entries.pop(session_id, None)
-        self._history.pop(session_id, None)
+        with self._lock:
+            self._entries.pop(session_id, None)
+            self._history.pop(session_id, None)

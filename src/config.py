@@ -30,6 +30,7 @@ config.py — 全局配置（环境变量 → 一个只读 Settings 对象）
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Optional
 
 # 从仓库根目录 .env 注入环境变量（无需依赖 shell 里先 source .env）
 try:
@@ -54,6 +55,11 @@ def _normalize_openai_base_url(value: str) -> str:
     if normalized.endswith("/chat/completions"):
         return normalized[: -len("/chat/completions")]
     return normalized
+
+
+def _get_optional_float(name: str) -> Optional[float]:
+    value = os.getenv(name, "").strip()
+    return float(value) if value else None
 
 
 @dataclass(frozen=True)
@@ -116,9 +122,15 @@ class Settings:
     enable_session_cache: bool = _get_bool("RAG_ENABLE_SESSION_CACHE", True)
     session_cache_require_verified: bool = _get_bool("RAG_SESSION_CACHE_REQUIRE_VERIFIED", True)
     session_max_history: int = int(os.getenv("RAG_SESSION_MAX_HISTORY", "50"))
-    benchmark_recall_at_10: float = float(os.getenv("RAG_BENCHMARK_RECALL_AT_10", "0.894"))
-    benchmark_accuracy: float = float(os.getenv("RAG_BENCHMARK_ACCURACY", "0.587"))
-    benchmark_router_accuracy: float = float(os.getenv("RAG_BENCHMARK_ROUTER_ACCURACY", "0.92"))
+    research_tool_timeout_seconds: float = float(os.getenv("RAG_RESEARCH_TOOL_TIMEOUT_SECONDS", "30"))
+    research_job_timeout_seconds: float = float(os.getenv("RAG_RESEARCH_JOB_TIMEOUT_SECONDS", "300"))
+    research_dispatch_workers: int = int(os.getenv("RAG_RESEARCH_DISPATCH_WORKERS", "2"))
+    research_dispatch_queue: int = int(os.getenv("RAG_RESEARCH_DISPATCH_QUEUE", "32"))
+    research_engine_cache_size: int = int(os.getenv("RAG_RESEARCH_ENGINE_CACHE_SIZE", "16"))
+    cors_origins: str = os.getenv("RAG_CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
+    benchmark_recall_at_10: Optional[float] = _get_optional_float("RAG_BENCHMARK_RECALL_AT_10")
+    benchmark_accuracy: Optional[float] = _get_optional_float("RAG_BENCHMARK_ACCURACY")
+    benchmark_router_accuracy: Optional[float] = _get_optional_float("RAG_BENCHMARK_ROUTER_ACCURACY")
     # 降级检索：外部 embedding 不可用时可切到 BM25 词面召回
     enable_bm25_fallback: bool = _get_bool("RAG_ENABLE_BM25_FALLBACK", True)
     bm25_k1: float = float(os.getenv("RAG_BM25_K1", "1.2"))

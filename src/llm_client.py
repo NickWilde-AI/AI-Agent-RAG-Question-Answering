@@ -56,7 +56,7 @@ class LLMClient:
         )
         if not api_key:
             return cls(client=None, chat_model=SETTINGS.openai_chat_model, embedding_model=SETTINGS.openai_embedding_model)
-        kwargs = {"api_key": api_key}
+        kwargs = {"api_key": api_key, "timeout": SETTINGS.external_api_timeout_seconds, "max_retries": 0}
         if SETTINGS.openai_base_url:
             kwargs["base_url"] = SETTINGS.openai_base_url
         return cls(client=OpenAI(**kwargs), chat_model=SETTINGS.openai_chat_model, embedding_model=SETTINGS.openai_embedding_model)
@@ -100,7 +100,10 @@ class LLMClient:
                 )
             )
             return (resp.output_text or "").strip()
-        except Exception:
+        except Exception as exc:
+            # 仅当兼容网关不支持 Responses API 时切 Chat Completions；认证、限流和服务端错误不应再打第二轮请求。
+            if getattr(exc, "status_code", None) not in {400, 404, 405, 501}:
+                raise
             resp = self._call_with_retry(
                 lambda: self.client.chat.completions.create(
                     model=self.chat_model,

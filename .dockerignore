@@ -15,6 +15,9 @@ user_docs
 kb_pages
 data/user_pages.json
 data/index_manifest.json
+data/research
+reports
+artifacts
 models
 **/.cache
 *.pdf

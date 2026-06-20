@@ -348,7 +348,13 @@ class QAEngine:
     def _resolve_retry_topk(current_topk: int) -> int:
         return min(current_topk * SETTINGS.topk_retry_multiplier, SETTINGS.max_retry_topk)
 
-    def ask(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default") -> QAResult:
+    def ask(
+        self,
+        query: str,
+        topk: int = SETTINGS.topk_default,
+        session_id: str = "default",
+        forced_branch: str = "",
+    ) -> QAResult:
         """
         对外主入口（白话：**用户问一句话，本方法跑完一整条流水线并打包返回**）。
 
@@ -390,14 +396,17 @@ class QAEngine:
             self.memory.add_record(result, session_id=session_id)
             return result
 
-        if SETTINGS.enable_session_cache:
+        if SETTINGS.enable_session_cache and not forced_branch:
             cached = self.memory.try_get(session_id, query)
             if cached is not None:
                 return cached
 
         # --- 第 0 步：路由（用于分支自适应 top-k）---
         t0 = time.perf_counter()
-        route_branch = self.router.route(query)
+        allowed_branches={RouterAgent.BRANCH_FACT,RouterAgent.BRANCH_MULTI,RouterAgent.BRANCH_CHART}
+        if forced_branch and forced_branch not in allowed_branches:
+            raise ValueError(f"unsupported forced branch: {forced_branch}")
+        route_branch = forced_branch or self.router.route(query)
         route_cost = int((time.perf_counter() - t0) * 1000)
         stage_traces.append(
             StageTrace(stage="route", elapsed_ms=route_cost, detail={"branch": route_branch})

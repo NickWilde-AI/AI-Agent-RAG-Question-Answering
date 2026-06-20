@@ -98,6 +98,7 @@ services:
       RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
     volumes:
       - ../../kb_pages:/app/kb_pages:ro
+      - rag-research-data:/app/data/research
     depends_on:
       redis:
         condition: service_healthy
@@ -115,3 +116,6 @@ services:
       timeout: 6s
       retries: 6
     restart: unless-stopped
+
+volumes:
+  rag-research-data:

@@ -24,6 +24,7 @@ COPY scripts ./scripts
 COPY web ./web
 COPY data/demo_pages.json ./data/demo_pages.json
 COPY main.py .
+RUN mkdir -p /app/data/research /app/logs
 
 EXPOSE 8000
 

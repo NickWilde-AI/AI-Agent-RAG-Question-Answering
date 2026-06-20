@@ -43,6 +43,7 @@ class RedisSessionMemory(SessionMemory):
                 "Install dependency or set RAG_SESSION_BACKEND=memory."
             ) from exc
         self._client = redis.from_url(redis_url, decode_responses=True)
+        self._client.ping()
         self._ttl = ttl_seconds
 
     @staticmethod

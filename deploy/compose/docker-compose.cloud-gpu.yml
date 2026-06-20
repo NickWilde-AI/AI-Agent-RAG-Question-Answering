@@ -15,7 +15,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -28,7 +28,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.colpali
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
     environment:
       COLPALI_MODEL_DIR: /models/colpali-v1.3
     volumes:
@@ -62,6 +62,7 @@ services:
       RAG_ENABLE_SESSION_CACHE: "true"
     volumes:
       - ../../kb_pages:/app/kb_pages:ro
+      - rag-research-data:/app/data/research
       # - ../../data/user_pages.json:/app/data/user_pages.json:ro
     depends_on:
       redis:
@@ -69,3 +70,6 @@ services:
       colpali:
         condition: service_started
     restart: unless-stopped
+
+volumes:
+  rag-research-data:

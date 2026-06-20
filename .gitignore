@@ -47,6 +47,7 @@ pythonProject1/
 
 # 离线评测产物（由 /eval/run 生成）
 reports/eval/
+data/research/
 data/eval_sets/
 data/eval_candidates*.jsonl
 data/rag_quality_testset.generated.json

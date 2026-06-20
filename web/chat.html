@@ -118,7 +118,7 @@
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .content {
       display: grid;
-      grid-template-columns: 260px 1fr;
+      grid-template-columns: 280px 1fr;
       min-height: 64vh;
     }
     .side {
@@ -133,6 +133,17 @@
       font-weight: 700;
       letter-spacing: .2px;
     }
+    .workspace-box { margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+    .workspace-box input,.workspace-box select,.research-panel textarea { width:100%; padding:9px; margin:5px 0; border:1px solid var(--border); border-radius:8px; background:#fff; }
+    .mode-tabs { display:flex; gap:6px; padding:10px 18px 0; }
+    .mode-tab { border:1px solid var(--border); background:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; }
+    .mode-tab.active { color:#fff; background:var(--primary); border-color:var(--primary); }
+    .research-panel { padding:16px 20px; display:none; }
+    .research-panel.active { display:block; }
+    .research-panel textarea { min-height:100px; resize:vertical; }
+    .job-card { border:1px solid var(--border); border-radius:12px; margin-top:12px; padding:14px; background:#fafcff; }
+    .progress { height:8px; background:#e5e7eb; border-radius:8px; overflow:hidden; }.progress>i{display:block;height:100%;background:var(--primary)}
+    .evidence-item { padding:8px 0; border-top:1px dashed var(--border); font-size:13px; }
     .chip-list {
       display: flex;
       flex-wrap: wrap;
@@ -412,7 +423,7 @@
       <div>
         <div class="brand">
           <span class="dot"></span>
-          <h1 class="title">企业智能问答台</h1>
+          <h1 class="title">企业多模态研究 Agent</h1>
         </div>
         <p class="sub">日间模式 · Frontend 仅调用 FastAPI，发布由平台侧负责</p>
         <p id="capsLine" class="caps-line"></p>
@@ -430,6 +441,15 @@
 
     <div class="content">
       <aside class="side">
+        <div class="workspace-box">
+          <h3>研究空间</h3>
+          <select id="workspaceSelect"><option value="">未选择空间</option></select>
+          <input id="workspaceName" placeholder="新空间名称" />
+          <button class="btn-ghost" id="createWorkspaceBtn">创建空间</button>
+          <input id="documentFile" type="file" />
+          <button class="btn-ghost" id="uploadDocumentBtn">上传资料</button>
+          <div id="documentList" class="meta">选择空间后显示资料</div>
+        </div>
         <h3>快速提问示例</h3>
         <div class="chip-list" id="quickList">
           <button class="chip" data-q="采购申请单的采购单号是多少？">采购单号</button>
@@ -447,7 +467,14 @@
         </div>
       </aside>
       <div class="main-col">
-        <div id="chat" class="chat"></div>
+        <div class="mode-tabs"><button class="mode-tab active" data-mode="qa">即时问答</button><button class="mode-tab" data-mode="research">复杂研究</button></div>
+        <div id="qaPanel"><div id="chat" class="chat"></div></div>
+        <div id="researchPanel" class="research-panel">
+          <textarea id="researchObjective" placeholder="例如：对比这些资料中的关键指标，找出差异和潜在风险，并给出引用依据。"></textarea>
+          <button class="btn" id="submitResearchBtn">开始研究</button>
+          <button class="btn-ghost" id="cancelResearchBtn" disabled>取消任务</button>
+          <div id="researchResult" class="job-card">尚未提交研究任务</div>
+        </div>
         <details class="session-drawer" id="sessionDrawer">
           <summary>本地会话与调试（仅存浏览器）</summary>
           <div class="session-inner">
@@ -487,6 +514,8 @@
     const runEvalBtn = $("runEvalBtn");
     const loadEvalBtn = $("loadEvalBtn");
     const evalLog = $("evalLog");
+    const workspaceSelect=$("workspaceSelect"), documentList=$("documentList"), researchResult=$("researchResult");
+    let currentJobId="", pollTimer=null;
 
     const SESSION_KEY = "rag_chat_session_v1";
     const CLIENT_SESSION_ID_KEY = "rag_chat_client_session_id_v1";
@@ -507,6 +536,23 @@
       localStorage.setItem("chat_api_base", base);
       return base;
     }
+
+    async function loadWorkspaces() {
+      try {
+        const rows=await (await fetch(getBase()+"/workspaces")).json(); const selected=workspaceSelect.value;
+        workspaceSelect.innerHTML='<option value="">未选择空间</option>';
+        rows.forEach(w=>{const o=document.createElement("option");o.value=w.workspace_id;o.textContent=w.name+" ("+w.document_count+")";workspaceSelect.appendChild(o)});
+        if(rows.some(w=>w.workspace_id===selected)) workspaceSelect.value=selected;
+        await loadDocuments();
+      } catch(e){ documentList.textContent="空间加载失败："+e.message; }
+    }
+    async function loadDocuments(){ const id=workspaceSelect.value;if(!id){documentList.textContent="未选择空间";return} const rows=await (await fetch(getBase()+`/workspaces/${id}/documents`)).json();documentList.textContent=rows.length?rows.map(x=>`${x.file_name} · ${x.status} · ${x.page_count}页`).join("\n"):"当前使用 demo 资料，可继续上传"; }
+    async function createWorkspace(){const name=$("workspaceName").value.trim();if(!name)return;const r=await fetch(getBase()+"/workspaces",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,use_demo:true})});const w=await r.json();await loadWorkspaces();workspaceSelect.value=w.workspace_id;await loadDocuments();}
+    async function uploadDocument(){const id=workspaceSelect.value,file=$("documentFile").files[0];if(!id||!file){setStatus("请先选择空间和文件","err");return}const fd=new FormData();fd.append("file",file);setStatus("资料入库中...");const r=await fetch(getBase()+`/workspaces/${id}/documents`,{method:"POST",body:fd});if(!r.ok)throw new Error(await r.text());await loadWorkspaces();setStatus("资料已入库","ok");}
+    function evidenceHtml(plan){return plan.flatMap(s=>(s.evidence||[]).map(e=>`<div class="evidence-item"><b>${escapeHtml(e.file_name)}</b> · ${e.page_no==null?escapeHtml(e.page_id):"p."+e.page_no}<br>${escapeHtml(e.excerpt||"")}</div>`)).join("")}
+    function escapeHtml(s){const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML}
+    async function pollJob(){if(!currentJobId)return;const j=await (await fetch(getBase()+`/research/jobs/${currentJobId}`)).json();researchResult.innerHTML=`<b>${escapeHtml(j.status)} · ${j.progress}%</b><div class="progress"><i style="width:${j.progress}%"></i></div>${(j.plan||[]).map(s=>`<p>${escapeHtml(s.title)} · ${escapeHtml(s.tool_name)} · ${escapeHtml(s.status)} · ${s.verified?"已验证":"待验证"}</p>`).join("")}<details><summary>页级证据</summary>${evidenceHtml(j.plan||[])||"暂无证据"}</details>`;if(j.status==="completed"){clearInterval(pollTimer);researchResult.innerHTML+=`<p><a target="_blank" href="${getBase()}/research/jobs/${currentJobId}/report.html">查看 HTML 报告</a> · <a href="${getBase()}/research/jobs/${currentJobId}/report.md">下载 Markdown</a></p>`}else if(["failed","cancelled"].includes(j.status))clearInterval(pollTimer)}
+    async function submitResearch(){const workspace_id=workspaceSelect.value,objective=$("researchObjective").value.trim();if(!workspace_id||!objective){setStatus("请选择空间并填写研究目标","err");return}const r=await fetch(getBase()+"/research/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({workspace_id,objective,session_id:clientSessionId})});if(!r.ok)throw new Error(await r.text());currentJobId=(await r.json()).job_id;$("cancelResearchBtn").disabled=false;pollTimer=setInterval(pollJob,700);pollJob()}
 
     function loadSession() {
       try {
@@ -732,7 +778,7 @@
         const r = await fetch(base + "/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, topk, session_id: clientSessionId })
+          body: JSON.stringify({ query, topk, session_id: clientSessionId, workspace_id: workspaceSelect.value || null })
         });
         if (!r.ok) {
           const t = await r.text();
@@ -822,10 +868,14 @@
     });
     apiBaseEl.addEventListener("change", () => {
       refreshCaps();
+      loadWorkspaces();
     });
+    $("createWorkspaceBtn").addEventListener("click",createWorkspace);workspaceSelect.addEventListener("change",loadDocuments);$("uploadDocumentBtn").addEventListener("click",()=>uploadDocument().catch(e=>setStatus(e.message,"err")));$("submitResearchBtn").addEventListener("click",()=>submitResearch().catch(e=>setStatus(e.message,"err")));$("cancelResearchBtn").addEventListener("click",async()=>{if(currentJobId)await fetch(getBase()+`/research/jobs/${currentJobId}/cancel`,{method:"POST"});pollJob()});
+    document.querySelectorAll(".mode-tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".mode-tab").forEach(x=>x.classList.toggle("active",x===b));$("qaPanel").style.display=b.dataset.mode==="qa"?"block":"none";$("researchPanel").classList.toggle("active",b.dataset.mode==="research");document.querySelector(".toolbar").style.display=b.dataset.mode==="qa"?"flex":"none";}));
 
     renderSessionDump();
     refreshCaps();
+    loadWorkspaces();
 
     appendBotBundle("你好，我是企业智能问答助手。回答正文在上；分支、命中页、耗时等折叠在「检索与运行详情」里。底部可导出本会话 JSON，服务端日志在 logs/api.log。", {
       branch: "—",

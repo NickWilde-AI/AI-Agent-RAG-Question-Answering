@@ -25,4 +25,9 @@ services:
       RAG_ENABLE_COLPALI_RERANK: "false"
       RAG_COLPALI_RERANK_API: ""
       RAG_ENABLE_PLAN_EXECUTE_LOOP: "false"
+    volumes:
+      - rag-research-data:/app/data/research
     restart: unless-stopped
+
+volumes:
+  rag-research-data:
