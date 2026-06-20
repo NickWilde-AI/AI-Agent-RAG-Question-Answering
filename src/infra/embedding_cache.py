@@ -39,4 +39,3 @@ class JSONEmbeddingCache:
             tmp=self.path.with_suffix(self.path.suffix+".tmp")
             tmp.write_text(json.dumps(self._items,separators=(",",":")),encoding="utf-8")
             tmp.replace(self.path); self._dirty=False
-
