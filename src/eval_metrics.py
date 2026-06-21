@@ -40,6 +40,14 @@ def recall_at_k(ranked_doc_ids: Sequence[str], positive_doc_ids: Iterable[str], 
     return 1.0 if any(doc_id in gold for doc_id in ranked_doc_ids[:k]) else 0.0
 
 
+def mrr_at_k(ranked_doc_ids: Sequence[str], positive_doc_ids: Iterable[str], k: int = 10) -> float:
+    """第一个金标页的倒数排名；top-k 未命中返回 0。"""
+    gold=set(positive_doc_ids)
+    for rank,page_id in enumerate(ranked_doc_ids[:k],1):
+        if page_id in gold: return 1.0/rank
+    return 0.0
+
+
 def normalize_answer(text: str) -> str:
     """文本归一化：小写 + 首尾空白去除 + 连续空格压缩。"""
     return " ".join(text.lower().strip().split())

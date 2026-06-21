@@ -51,6 +51,7 @@ reports/eval/
 reports/load/
 data/research/
 data/eval_sets/
+data/gold_review/
 data/eval_candidates*.jsonl
 data/rag_quality_testset.generated.json
 data/kafka_reindex_state.json

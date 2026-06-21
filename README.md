@@ -335,6 +335,30 @@ bash scripts/one_click_demo.sh
 | `python scripts/load_test.py --mode mixed --stages 10:10,50:20,100:30` | 分阶段并发压测，输出 P50/P95/P99、RPS、错误与报告 |
 | `python scripts/check_qwen_api.py` | 使用合成内容检查千问文本/视觉模型配置，不发送企业文档 |
 
+### 金标问答集
+
+自动生成的内容只是候选；只有在本地审核页点击“接受”或修改后接受，才会进入正式 `gold.jsonl`。
+
+```bash
+# 1. 全量约270页生成，可中断后重复执行，已完成页面自动跳过
+python scripts/build_gold_candidates.py --dry-run
+python scripts/build_gold_candidates.py --pages data/user_pages.json
+
+# 2. 本地人工审核（仅监听127.0.0.1）
+python scripts/gold_review_server.py
+# 浏览器打开 http://127.0.0.1:8765
+
+# 3. 导出不可变金标版本
+python scripts/export_gold_dataset.py --tag first-gold
+
+# 4. 启动问答服务后运行正式评测
+python scripts/run_gold_eval.py \
+  --gold data/eval_sets/<version>/gold.jsonl \
+  --base http://127.0.0.1:8000
+```
+
+候选生成使用千问多模态 API；单页生成 fact/chart，同一文档相邻页生成 multi-page。审核状态保存在 SQLite，生成与审核均可断点继续。正式报告包含 MRR@10、Recall@1/3/10、Relaxed Exact Match、Router Accuracy、Verifier/Fallback 和阶段耗时。
+
 提测示例（先 `bash scripts/one_click_demo.sh`）：
 
 ```bash
