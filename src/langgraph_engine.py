@@ -296,7 +296,7 @@ class LangGraphQAEngine:
 
         t3 = time.perf_counter()
         evidence_pages = self._base._evidence_pages_for_verify(state["branch"], state["hits"])
-        verified = self.verifier.verify(answer=state["answer"], pages=evidence_pages)
+        verified = self.verifier.verify(query=state["query"],answer=state["answer"], pages=evidence_pages)
         verify_cost = int((time.perf_counter() - t3) * 1000)
         traces = list(state.get("stage_traces", []))
         traces.append(
@@ -391,7 +391,7 @@ class LangGraphQAEngine:
         tv = time.perf_counter()
         retry_hits = state.get("retry_hits") or []
         retry_evidence = self._base._evidence_pages_for_verify(state["branch"], retry_hits)
-        verified = self.verifier.verify(answer=state["answer"], pages=retry_evidence)
+        verified = self.verifier.verify(query=state["query"],answer=state["answer"], pages=retry_evidence)
         traces = list(state.get("stage_traces", []))
         traces.append(
             StageTrace(
@@ -402,7 +402,7 @@ class LangGraphQAEngine:
         )
         return {"verified": verified, "stage_traces": traces}
 
-    def ask(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default", forced_branch: str = "") -> QAResult:
+    def ask(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default", forced_branch: str = "", event_callback=None) -> QAResult:
         state: QAState = {
             "query": query,
             "session_id": session_id,
@@ -431,6 +431,7 @@ class LangGraphQAEngine:
         if cached is not None:
             if not out.get("skip_memory_write", False):
                 self.memory.add_record(cached, session_id=session_id)
+            if event_callback: event_callback(StageTrace(stage="cache_hit",elapsed_ms=0,detail={"message":"命中会话缓存"}))
             return cached
 
         result = QAResult(
@@ -451,4 +452,6 @@ class LangGraphQAEngine:
             ),
         )
         self.memory.add_record(result, session_id=session_id)
+        if event_callback and result.trace:
+            for stage in result.trace.stages: event_callback(stage)
         return result

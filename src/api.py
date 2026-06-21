@@ -34,7 +34,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +48,7 @@ from .bootstrap import build_engine
 from .config import SETTINGS
 from .middleware_ops import RateLimitMiddleware, RequestTimingMiddleware
 from .router import router_circuit_open
-from .services import vlm_circuit_open
+from .services import VLMClient, vlm_circuit_open
 from .eval_suite import DEFAULT_EVAL_SAMPLES, run_eval_report
 from .infra.eval_report_store import load_latest_eval_report, save_eval_report
 from .infra.document_ingest import ingest_document
@@ -188,7 +188,7 @@ def capabilities() -> Dict[str, Any]:
         "colpali_rerank": bool(SETTINGS.enable_colpali_rerank and SETTINGS.colpali_rerank_api),
         "function_calling_router": bool(SETTINGS.enable_function_calling_router and SETTINGS.openai_api_key),
         "langgraph": SETTINGS.enable_langgraph,
-        "vlm": bool(SETTINGS.vlm_api),
+        "vlm": VLMClient().enabled,
         "chart_parsing": bool(SETTINGS.chart_parsing_api),
         "bm25_fallback": SETTINGS.enable_bm25_fallback,
         "rate_limit": SETTINGS.enable_rate_limit,
@@ -206,8 +206,12 @@ def capabilities() -> Dict[str, Any]:
         "anonymous_conversations": True,
         "qwen_vision_parser": bool(SETTINGS.enable_qwen_vision_parser and SETTINGS.effective_openai_api_key),
         "qwen_vision_model": SETTINGS.vision_parser_model if SETTINGS.enable_qwen_vision_parser else "",
+        "qwen_online_vlm_model": SETTINGS.qwen_vlm_model if SETTINGS.enable_qwen_vision_parser else "",
         "report_generation": True,
         "job_backend": "in_process_thread_pool",
+        "agentic_rag": True,
+        "ask_sse": True,
+        "deep_research_plan_execute": True,
         "agentic_query_expansion": SETTINGS.enable_query_expansion,
         "agentic_retry_refine": SETTINGS.enable_agentic_retry_refine,
         "benchmark": {
@@ -495,9 +499,8 @@ def eval_last() -> Dict[str, Any]:
     return {"exists": True, **payload}
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest) -> AskResponse:
-    """核心问答接口。"""
+def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None) -> AskResponse:
+    """核心问答实现；同步 JSON 与 SSE 入口共用，避免两套行为漂移。"""
     start = time.perf_counter()
     loop_steps: Optional[List[Dict[str, Any]]] = None
     sid = req.session_id
@@ -516,9 +519,9 @@ def ask(req: AskRequest) -> AskResponse:
             if not research_repository.get_workspace(effective_workspace): raise _not_found("workspace")
             scoped_engine=research_executor.build_workspace_engine(effective_workspace)
             response_engine=scoped_engine
-            result=scoped_engine.ask(req.query,topk=req.topk or SETTINGS.topk_default,session_id=sid)
+            result=scoped_engine.ask(req.query,topk=req.topk or SETTINGS.topk_default,session_id=sid,event_callback=stage_callback)
         elif SETTINGS.enable_plan_execute_loop:
-            loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid)
+            loop_run = agent_loop.run(req.query, topk=req.topk or SETTINGS.topk_default, session_id=sid,event_callback=stage_callback)
             result = loop_run.result
             loop_steps = [
                 {
@@ -532,9 +535,9 @@ def ask(req: AskRequest) -> AskResponse:
             ]
         else:
             if req.topk:
-                result = engine.ask(req.query, topk=req.topk, session_id=sid)
+                result = engine.ask(req.query, topk=req.topk, session_id=sid,event_callback=stage_callback)
             else:
-                result = engine.ask(req.query, session_id=sid)
+                result = engine.ask(req.query, session_id=sid,event_callback=stage_callback)
     except Exception as exc:
         if SETTINGS.sentry_dsn:
             with sentry_sdk.push_scope() as scope:
@@ -606,3 +609,53 @@ def ask(req: AskRequest) -> AskResponse:
         payload = response.model_dump() if hasattr(response, "model_dump") else response.dict()
         research_repository.add_message(req.conversation_id,"assistant",response.answer,payload)
     return response
+
+
+@app.post("/ask", response_model=AskResponse)
+def ask(req: AskRequest) -> AskResponse:
+    """兼容旧客户端的同步问答接口。"""
+    return _ask_impl(req)
+
+
+@app.post("/ask/stream")
+async def ask_stream(req: AskRequest,request: Request) -> StreamingResponse:
+    """普通问答 SSE：实时推送路由、检索、生成、校验和重试阶段。"""
+    stage_messages={
+        "cache_hit":"命中会话缓存",
+        "route":"已完成意图分析与工具路由",
+        "retrieve":"已完成知识库检索",
+        "agentic_critique":"证据不足，Agent 正在反思并改写检索",
+        "retry_retrieve":"已完成扩展检索",
+        "generate":"已完成答案生成",
+        "verify":"已完成证据校验",
+        "retry_generate":"已完成重试生成",
+        "retry_verify":"已完成重试校验",
+    }
+    async def generate():
+        loop=asyncio.get_running_loop(); events: asyncio.Queue = asyncio.Queue()
+        def on_stage(stage) -> None:
+            payload={
+                "stage":stage.stage,
+                "message":stage_messages.get(stage.stage,stage.stage),
+                "elapsed_ms":stage.elapsed_ms,
+                "detail":stage.detail,
+            }
+            loop.call_soon_threadsafe(events.put_nowait,payload)
+        yield "event: accepted\ndata: "+json.dumps({"stage":"accepted","message":"已接收问题，开始执行 Agent"},ensure_ascii=False)+"\n\n"
+        task=asyncio.create_task(asyncio.to_thread(_ask_impl,req,on_stage))
+        while not task.done() or not events.empty():
+            if await request.is_disconnected():
+                break
+            try:
+                item=await asyncio.wait_for(events.get(),timeout=.25)
+                yield "event: stage\ndata: "+json.dumps(item,ensure_ascii=False)+"\n\n"
+            except asyncio.TimeoutError:
+                continue
+        if await request.is_disconnected(): return
+        try:
+            response=await task
+            payload=response.model_dump() if hasattr(response,"model_dump") else response.dict()
+            yield "event: final\ndata: "+json.dumps(payload,ensure_ascii=False)+"\n\n"
+        except Exception as exc:
+            yield "event: error\ndata: "+json.dumps({"message":str(exc)[:500]},ensure_ascii=False)+"\n\n"
+    return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})

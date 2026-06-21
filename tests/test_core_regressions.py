@@ -22,3 +22,17 @@ def test_session_memory_concurrent_history_is_bounded():
         memory.add_record(QAResult(query=f"q{i}",rewritten_query=f"q{i}",branch="fact_qa",answer="a",verified=True,hits=[]),session_id="s")
     with ThreadPoolExecutor(max_workers=8) as pool: list(pool.map(add,range(200)))
     assert len(memory.get_recent_history("s",limit=1000)) == 20
+
+
+def test_direct_qwen_vlm_adapter(monkeypatch):
+    class FakeDirect:
+        enabled=True
+        def answer(self,query,image_paths,mode): return "视觉答案"
+        def verify(self,query,answer,image_paths): return True
+    from src.services import VLMClient
+    client=VLMClient(api_url="")
+    client._direct=FakeDirect()
+    client._verifier_direct=FakeDirect()
+    assert client.enabled
+    assert client.answer("问题",["page.png"],"single_page") == "视觉答案"
+    assert client.verify("问题","视觉答案",["page.png"]) is True

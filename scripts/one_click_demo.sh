@@ -164,6 +164,9 @@ set +a
 if [ "$QWEN_MODE" = "1" ]; then
   export RAG_ENABLE_QWEN_VISION_PARSER=true
   export RAG_VISION_PARSER_MODEL="${RAG_VISION_PARSER_MODEL:-qwen-vl-ocr}"
+  export RAG_QWEN_VLM_MODEL="${RAG_QWEN_VLM_MODEL:-qwen3-vl-plus}"
+  export RAG_QWEN_VLM_VERIFIER_MODEL="${RAG_QWEN_VLM_VERIFIER_MODEL:-qwen3-vl-flash}"
+  export RAG_ENABLE_LLM_ROUTER=true RAG_ENABLE_LLM_VERIFIER=true
   RAG_BUILD_PAGE_IMAGES=1
 fi
 
@@ -178,7 +181,7 @@ if [ "$RAG_OFFLINE_MODE" = "1" ]; then
   echo "运行模式：纯本地离线（规则规划 + 哈希/BM25 检索 + demo fallback，不调用远端模型 API）"
 else
   if [ "$QWEN_MODE" = "1" ]; then
-    echo "运行模式：千问增强（qwen-plus 文本生成 + ${RAG_VISION_PARSER_MODEL} 页面视觉解析）"
+    echo "运行模式：千问 Agentic（qwen-plus 路由/生成 + ${RAG_VISION_PARSER_MODEL} 入库解析 + ${RAG_QWEN_VLM_MODEL} 页图推理）"
   else
     echo "运行模式：API（使用 .env 中显式配置的 OpenAI-compatible 服务）"
   fi

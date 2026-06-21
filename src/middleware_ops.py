@@ -35,7 +35,7 @@ def _bucket_for(client_key: str) -> TokenBucket:
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        protected = request.url.path == "/ask" or request.url.path == "/research/jobs" or (
+        protected = request.url.path in {"/ask","/ask/stream","/research/jobs"} or (
             request.method == "POST" and request.url.path.endswith("/documents")
         )
         if protected and SETTINGS.enable_rate_limit:

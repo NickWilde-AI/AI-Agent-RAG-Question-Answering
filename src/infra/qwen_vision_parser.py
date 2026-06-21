@@ -6,7 +6,7 @@ import base64
 import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from openai import OpenAI
 
@@ -74,3 +74,61 @@ class QwenVisionPageParser:
             temperature=0,
         )
         return (response.choices[0].message.content or "").strip()
+
+
+@dataclass
+class QwenVisionInferenceClient:
+    """在线单图/多图问答与证据校验；和入库 OCR 模型职责分离。"""
+
+    model: str = SETTINGS.qwen_vlm_model
+
+    def __post_init__(self) -> None:
+        self.client: Optional[OpenAI] = None
+        if self.enabled:
+            self.client=OpenAI(
+                api_key=SETTINGS.effective_openai_api_key,
+                base_url=SETTINGS.openai_base_url or None,
+                timeout=SETTINGS.vision_parser_timeout_seconds,
+                max_retries=max(0,SETTINGS.llm_max_retries),
+            )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            SETTINGS.enable_qwen_vision_parser
+            and SETTINGS.effective_openai_api_key
+            and SETTINGS.openai_base_url
+            and self.model
+        )
+
+    def _complete(self,prompt: str,image_paths: List[str]) -> str:
+        if not self.client: raise RuntimeError("Qwen vision inference is not configured")
+        content=[{"type":"text","text":prompt}]
+        content.extend(
+            {"type":"image_url","image_url":{"url":QwenVisionPageParser._data_url(path)}}
+            for path in image_paths if Path(path).exists()
+        )
+        response=self.client.chat.completions.create(
+            model=self.model,messages=[{"role":"user","content":content}],temperature=0
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    def answer(self,query: str,image_paths: List[str],mode: str) -> str:
+        prompt=(
+            "你是企业多模态知识库助手。只能依据随后页面图像回答，不得编造。"
+            "先给出简洁结论，再用 Markdown 列表说明证据；涉及数字、人名、编号时必须逐字核对。"
+            "如果页面不足以支持答案，明确写‘当前页图证据不足’，不要用外部知识补全。\n"
+            f"任务模式：{mode}\n用户问题：{query}"
+        )
+        return self._complete(prompt,image_paths)
+
+    def verify(self,query: str,answer: str,image_paths: List[str]) -> Optional[bool]:
+        result=self._complete(
+            "请严格核验下面答案能否被页面图像直接支持。数字、人名、编号任一不一致即不通过。"
+            "只回答 YES 或 NO。\n"
+            f"问题：{query}\n答案：{answer[:4000]}",image_paths
+        )
+        normalized=result.strip().upper()
+        if normalized.startswith("YES"): return True
+        if normalized.startswith("NO"): return False
+        return None

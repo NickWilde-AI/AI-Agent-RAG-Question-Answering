@@ -30,7 +30,7 @@ ReAct 思路的 Plan-Execute-Agent Loop（工程化简化版）。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Callable, List, Optional
 
 from .config import SETTINGS
 from .models import QAResult, RetrievalHit
@@ -92,7 +92,7 @@ class PlanExecuteAgentLoop:
         self.engine = engine
         self.max_loops = max_loops
 
-    def run(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default") -> LoopRunResult:
+    def run(self, query: str, topk: int = SETTINGS.topk_default, session_id: str = "default", event_callback: Optional[Callable] = None) -> LoopRunResult:
         # 白话：脚印空列表；current_topk = 这一轮打算「最多捞几页材料」
         steps: List[LoopStep] = []
         current_topk = topk
@@ -100,7 +100,7 @@ class PlanExecuteAgentLoop:
 
         for step_no in range(1, self.max_loops + 1):
             # 白话：用当前的「捞页数量」跑**完整一整遍**问答案（内部该验的都会验）
-            last_result = self.engine.ask(query=query, topk=current_topk, session_id=session_id)
+            last_result = self.engine.ask(query=query, topk=current_topk, session_id=session_id,event_callback=event_callback)
             # 白话：记一行脚印，方便你知道这一轮用了多少页、验过没
             steps.append(
                 LoopStep(
@@ -127,4 +127,3 @@ class PlanExecuteAgentLoop:
         白话：对外展示「最终到底用了哪些命中页」时，若有「第二次捞页」的结果就优先用那次，否则用第一次。
         """
         return result.retry_hits or result.hits
-

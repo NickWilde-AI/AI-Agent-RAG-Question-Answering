@@ -202,5 +202,10 @@ def test_api_conversation_and_sse_events(tmp_path):
         assert "event: plan_created" in stream.text
         assert "event: job_completed" in stream.text
         assert stream.headers["content-type"].startswith("text/event-stream")
+        ask_stream=client.post("/ask/stream",json={"query":"产品线最高销售额是多少","session_id":"stream-test"})
+        assert ask_stream.status_code == 200
+        assert "event: accepted" in ask_stream.text
+        assert "event: stage" in ask_stream.text
+        assert "event: final" in ask_stream.text
     finally:
         api.research_repository,api.research_executor.repo=old_repo,old_executor

@@ -50,7 +50,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Optional
 
 from .config import SETTINGS
 from .memory import SessionMemory
@@ -354,6 +354,7 @@ class QAEngine:
         topk: int = SETTINGS.topk_default,
         session_id: str = "default",
         forced_branch: str = "",
+        event_callback: Optional[Callable[[StageTrace], None]] = None,
     ) -> QAResult:
         """
         对外主入口（白话：**用户问一句话，本方法跑完一整条流水线并打包返回**）。
@@ -371,6 +372,10 @@ class QAEngine:
         5) 失败则 fallback：扩 top-k 重试一次（相当于“降级/重试策略”）
         """
         stage_traces: List[StageTrace] = []
+        def record_stage(stage: StageTrace) -> None:
+            stage_traces.append(stage)
+            if event_callback:
+                event_callback(stage)
         retry_reason = ""
         route_branch = RouterAgent.BRANCH_FACT
 
@@ -399,6 +404,8 @@ class QAEngine:
         if SETTINGS.enable_session_cache and not forced_branch:
             cached = self.memory.try_get(session_id, query)
             if cached is not None:
+                if event_callback:
+                    event_callback(StageTrace(stage="cache_hit",elapsed_ms=0,detail={"message":"命中会话缓存"}))
                 return cached
 
         # --- 第 0 步：路由（用于分支自适应 top-k）---
@@ -408,7 +415,7 @@ class QAEngine:
             raise ValueError(f"unsupported forced branch: {forced_branch}")
         route_branch = forced_branch or self.router.route(query)
         route_cost = int((time.perf_counter() - t0) * 1000)
-        stage_traces.append(
+        record_stage(
             StageTrace(stage="route", elapsed_ms=route_cost, detail={"branch": route_branch})
         )
         effective_topk = self._resolve_initial_topk(route_branch, topk)
@@ -417,7 +424,7 @@ class QAEngine:
         t1 = time.perf_counter()
         rewritten_query, hits = self.retriever.retrieve(query=query, topk=effective_topk)
         retrieval_cost = int((time.perf_counter() - t1) * 1000)
-        stage_traces.append(
+        record_stage(
             StageTrace(
                 stage="retrieve",
                 elapsed_ms=retrieval_cost,
@@ -443,7 +450,7 @@ class QAEngine:
             )
             retry_query = self._refined_retry_query(query=query, branch=route_branch, critique=critique)
             low_conf_retry_query = retry_query
-            stage_traces.append(
+            record_stage(
                 StageTrace(
                     stage="agentic_critique",
                     elapsed_ms=0,
@@ -454,7 +461,7 @@ class QAEngine:
             tr = time.perf_counter()
             retry_rewritten_query, retry_hits = self.retriever.retrieve(query=retry_query, topk=retry_topk)
             low_conf_retry_hits = retry_hits
-            stage_traces.append(
+            record_stage(
                 StageTrace(
                     stage="retry_retrieve",
                     elapsed_ms=int((time.perf_counter() - tr) * 1000),
@@ -506,7 +513,7 @@ class QAEngine:
         answer = self._run_branch(branch=branch, query=query, hits=hits)
         source_files = list(self._last_source_files)
         generation_cost = int((time.perf_counter() - t2) * 1000)
-        stage_traces.append(
+        record_stage(
             StageTrace(
                 stage="generate",
                 elapsed_ms=generation_cost,
@@ -517,9 +524,9 @@ class QAEngine:
         # --- 第 4 步：校验（白话：Verifier 对照「证据页」看答案靠不靠谱；evidence 可能比 top-k 宽）---
         t3 = time.perf_counter()
         evidence_pages = self._evidence_pages_for_verify(branch, hits)
-        verified = self.verifier.verify(answer=answer, pages=evidence_pages)
+        verified = self.verifier.verify(query=query,answer=answer, pages=evidence_pages)
         verify_cost = int((time.perf_counter() - t3) * 1000)
-        stage_traces.append(
+        record_stage(
             StageTrace(
                 stage="verify",
                 elapsed_ms=verify_cost,
@@ -546,7 +553,7 @@ class QAEngine:
                 if SETTINGS.enable_agentic_retry_refine
                 else query
             )
-            stage_traces.append(
+            record_stage(
                 StageTrace(
                     stage="agentic_critique",
                     elapsed_ms=0,
@@ -560,7 +567,7 @@ class QAEngine:
                     retry_reason = "verifier_failed_with_branch_fallback"
             tr = time.perf_counter()
             _, retry_hits = self.retriever.retrieve(query=retry_query, topk=retry_topk)
-            stage_traces.append(
+            record_stage(
                 StageTrace(
                     stage="retry_retrieve",
                     elapsed_ms=int((time.perf_counter() - tr) * 1000),
@@ -576,7 +583,7 @@ class QAEngine:
             tg = time.perf_counter()
             answer = self._run_branch(branch=retry_branch, query=query, hits=retry_hits)
             source_files = list(self._last_source_files)
-            stage_traces.append(
+            record_stage(
                 StageTrace(
                     stage="retry_generate",
                     elapsed_ms=int((time.perf_counter() - tg) * 1000),
@@ -586,8 +593,8 @@ class QAEngine:
 
             tv = time.perf_counter()
             retry_evidence = self._evidence_pages_for_verify(retry_branch, retry_hits)
-            verified = self.verifier.verify(answer=answer, pages=retry_evidence)
-            stage_traces.append(
+            verified = self.verifier.verify(query=query,answer=answer, pages=retry_evidence)
+            record_stage(
                 StageTrace(
                     stage="retry_verify",
                     elapsed_ms=int((time.perf_counter() - tv) * 1000),

@@ -54,15 +54,15 @@ flowchart LR
 |------|----------|
 | **检索** | Agentic query expansion、RRF 多路融合、类型预过滤、向量 + 词面混合打分；可选远程 embedding / Milvus、可选 ColPali 视觉 rerank |
 | **路由** | 三分支：`fact` / `multi` / `chart`；规则优先，可选 LLM / Function Calling |
-| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并 |
+| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并；页图问题可将 top-3 候选页联合交给在线 VLM 判读 |
 | **校验** | 规则可证性 + 可选 LLM / VLM 校验；失败可扩 top-k 或分支 fallback 重试 |
 | **编排** | 默认 `QAEngine` 主链路；已接入 `LangGraphQAEngine`（`RAG_ENABLE_LANGGRAPH=true` 可切换）；内置 Agentic critique → refine-query → retry；可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
-| **可观测** | `/ask` 返回 `trace`（各阶段耗时与分支）；`/metrics` 暴露 Router / Verifier / 缓存等指标 |
+| **可观测** | `/ask` 返回 `trace`；`/ask/stream` 以 SSE 实时推送路由、检索、生成、校验与重试事件；`/metrics` 暴露 Router / Verifier / 缓存等指标 |
 | **评测** | `POST /eval/run` 离线跑样本集；`GET /eval/last` 读最近报告；报告落盘 `reports/eval/`（已 gitignore） |
-| **服务化** | FastAPI：`/ask`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
+| **服务化** | FastAPI：`/ask`、`/ask/stream`、`/health`、`/capabilities`、`/metrics`；静态托管 `web/chat.html` |
 | **建库** | `build_index_incremental.py` 增量扫描 `user_docs/`，输出 `data/user_pages.json` 与页图目录 |
 | **研究工作台** | Workspace 资料隔离、ResearchJob 计划/进度/取消、Evidence、Markdown/HTML 报告；SQLite 默认真源 |
-| **执行过程** | ResearchJob 通过 SSE 实时推送规划、检索、校验与报告事件，前端以时间线展示 |
+| **执行过程** | 即时问答与 ResearchJob 均通过 SSE 推送可审计的阶段事件，前端实时展示；不暴露模型私有 chain-of-thought |
 | **匿名会话** | 自动生成匿名客户端 ID，SQLite 持久化多对话与历史消息；无需注册即可新建、切换和删除对话 |
 | **安全边界** | 上传白名单/大小限制/路径隔离、文档提示词注入防护、HTML 转义+CSP、资料目录默认不进入 Git/Docker context |
 | **可靠性** | 原子幂等提交、取消竞态保护、任务/工具超时、有界 dispatcher、workspace 引擎缓存失效、重启中断状态修复 |

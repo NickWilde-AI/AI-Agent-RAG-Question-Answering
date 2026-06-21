@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib import request
 from prometheus_client import Counter
@@ -11,6 +11,7 @@ import sentry_sdk
 
 from .config import SETTINGS
 from .resilience import CircuitBreaker
+from .infra.qwen_vision_parser import QwenVisionInferenceClient
 
 VLM_FALLBACK_COUNT = Counter(
     "rag_vlm_fallback_total",
@@ -98,10 +99,12 @@ class VLMClient:
     """单图、多图 VLM 推理和多模态 verifier 统一适配。"""
 
     api_url: str = SETTINGS.vlm_api
+    _direct: QwenVisionInferenceClient = field(default_factory=QwenVisionInferenceClient,init=False,repr=False)
+    _verifier_direct: QwenVisionInferenceClient = field(default_factory=lambda:QwenVisionInferenceClient(model=SETTINGS.qwen_vlm_verifier_model),init=False,repr=False)
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_url)
+        return bool(self.api_url or self._direct.enabled)
 
     @staticmethod
     def _guard_before_call() -> None:
@@ -128,6 +131,9 @@ class VLMClient:
     def answer(self, query: str, image_paths: List[str], mode: str) -> str:
         self._guard_before_call()
         try:
+            if not self.api_url:
+                answer=self._direct.answer(query,image_paths,mode)
+                self._record_success(); return answer
             data = post_json(self.api_url, {"query": query, "image_paths": image_paths, "mode": mode})
             self._record_success()
             return str(data.get("answer", "")).strip()
@@ -138,6 +144,9 @@ class VLMClient:
     def verify(self, query: str, answer: str, image_paths: List[str]) -> Optional[bool]:
         self._guard_before_call()
         try:
+            if not self.api_url:
+                value=self._verifier_direct.verify(query,answer,image_paths)
+                self._record_success(); return value
             data = post_json(
                 self.api_url,
                 {"query": query, "answer": answer, "image_paths": image_paths, "mode": "verify"},
@@ -168,5 +177,3 @@ class ChartParsingClient:
         data = post_json(self.api_url, {"query": query, "image_paths": image_paths})
         chart_data = data.get("chart_data", {})
         return {str(k): float(v) for k, v in chart_data.items()}
-
-

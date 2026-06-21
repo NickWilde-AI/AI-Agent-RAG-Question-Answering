@@ -214,6 +214,9 @@
       font-size: 13px;
       border-color: var(--border);
     }
+    .thinking-content { display:flex; flex-direction:column; gap:6px; }
+    .thinking-stages { display:flex; flex-wrap:wrap; gap:5px; }
+    .stage-chip { padding:3px 7px; border-radius:999px; background:#eaf1ff; color:#315ca8; font-size:11px; }
     .spinner {
       flex-shrink: 0;
       width: 18px;
@@ -248,6 +251,11 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .answer-text h2,.answer-text h3,.answer-text h4 { margin:14px 0 6px; line-height:1.35; color:#17233d; }
+    .answer-text h2 { font-size:18px; }.answer-text h3 { font-size:16px; }.answer-text h4 { font-size:15px; }
+    .answer-text p { margin:7px 0; }.answer-text ul,.answer-text ol { margin:7px 0; padding-left:24px; }
+    .answer-text li { margin:4px 0; }.answer-text blockquote { margin:8px 0; padding:7px 11px; border-left:3px solid #91adf7; background:#f7f9ff; color:#46536d; }
+    .answer-text code { background:#edf1f8; border-radius:4px; padding:1px 4px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
     .run-detail {
       margin-top: 8px;
       border: 1px solid var(--border);
@@ -615,12 +623,21 @@
       wrap.id = "thinking-placeholder";
       const sp = document.createElement("div");
       sp.className = "spinner";
-      const tx = document.createElement("span");
+      const content = document.createElement("div"); content.className="thinking-content";
+      const tx = document.createElement("span"); tx.id="thinking-text";
       tx.textContent = "正在检索并生成回答…";
+      const stages=document.createElement("div");stages.id="thinking-stages";stages.className="thinking-stages";
+      content.append(tx,stages);
       wrap.appendChild(sp);
-      wrap.appendChild(tx);
+      wrap.appendChild(content);
       chatEl.appendChild(wrap);
       chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function updateThinkingStage(item){
+      const tx=$("thinking-text"),stages=$("thinking-stages");if(tx)tx.textContent=item.message||"Agent 正在执行…";
+      if(stages&&item.stage&&!stages.querySelector(`[data-stage="${item.stage}"]`)){const chip=document.createElement("span");chip.className="stage-chip";chip.dataset.stage=item.stage;chip.textContent=item.stage;stages.appendChild(chip)}
+      chatEl.scrollTop=chatEl.scrollHeight;
     }
 
     function removeThinkingPlaceholder() {
@@ -634,7 +651,7 @@
 
       const main = document.createElement("div");
       main.className = "answer-text";
-      main.textContent = answer || "(空响应)";
+      renderAnswerMarkdown(main,answer || "(空响应)");
 
       const det = document.createElement("details");
       det.className = "run-detail";
@@ -752,6 +769,30 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
+    function appendInline(parent,text){
+      const parts=String(text).split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean);
+      parts.forEach(part=>{if(part.startsWith("`")&&part.endsWith("`")){const code=document.createElement("code");code.textContent=part.slice(1,-1);parent.appendChild(code)}else if(part.startsWith("**")&&part.endsWith("**")){const strong=document.createElement("strong");strong.textContent=part.slice(2,-2);parent.appendChild(strong)}else parent.appendChild(document.createTextNode(part))});
+    }
+    function renderAnswerMarkdown(container,text){
+      container.innerHTML="";let list=null,listType="";
+      const closeList=()=>{list=null;listType=""};
+      String(text).replace(/\r/g,"").split("\n").forEach(raw=>{const line=raw.trim();if(!line){closeList();return}
+        let match=line.match(/^(#{1,4})\s+(.+)$/);if(match){closeList();const h=document.createElement(match[1].length<=2?"h2":match[1].length===3?"h3":"h4");appendInline(h,match[2]);container.appendChild(h);return}
+        match=line.match(/^【(.+)】$/);if(match){closeList();const h=document.createElement("h3");h.textContent=match[1];container.appendChild(h);return}
+        match=line.match(/^[-*]\s+(.+)$/);const ordered=line.match(/^\d+[.、]\s*(.+)$/);if(match||ordered){const type=ordered?"ol":"ul";if(!list||listType!==type){list=document.createElement(type);listType=type;container.appendChild(list)}const li=document.createElement("li");appendInline(li,(ordered||match)[1]);list.appendChild(li);return}
+        closeList();if(line.startsWith(">")){const q=document.createElement("blockquote");appendInline(q,line.replace(/^>\s?/,""));container.appendChild(q);return}
+        const p=document.createElement("p");appendInline(p,line);container.appendChild(p)
+      });
+    }
+
+    async function consumeSSE(response,onEvent){
+      if(!response.body)throw new Error("浏览器不支持流式响应");const reader=response.body.getReader(),decoder=new TextDecoder();let buffer="";
+      while(true){const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let pos;
+        while((pos=buffer.indexOf("\n\n"))>=0){const block=buffer.slice(0,pos);buffer=buffer.slice(pos+2);let event="message",data="";block.split("\n").forEach(line=>{if(line.startsWith("event:"))event=line.slice(6).trim();else if(line.startsWith("data:"))data+=line.slice(5).trim()});if(data)onEvent(event,JSON.parse(data))}
+        if(done)break;
+      }
+    }
+
     async function refreshCaps() {
       const base = getBase();
       capsLine.textContent = "";
@@ -794,8 +835,8 @@
         await ensureConversation();
         appendUserMessage(query, topk);
         appendThinkingPlaceholder();
-        setStatus("正在请求 /ask ...");
-        const r = await fetch(base + "/ask", {
+        setStatus("Agent 正在执行…");
+        const r = await fetch(base + "/ask/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, topk, session_id: currentConversationId, client_id: clientSessionId, conversation_id: currentConversationId, workspace_id: workspaceSelect.value || null })
@@ -804,7 +845,9 @@
           const t = await r.text();
           throw new Error("HTTP " + r.status + " " + t);
         }
-        const data = await r.json();
+        let data=null,streamError="";
+        await consumeSSE(r,(event,item)=>{if(event==="accepted"||event==="stage")updateThinkingStage(item);else if(event==="final")data=item;else if(event==="error")streamError=item.message||"流式请求失败"});
+        if(streamError)throw new Error(streamError);if(!data)throw new Error("流结束但未收到最终答案");
         removeThinkingPlaceholder();
         appendBotBundle(data.answer, data);
         const entry = {
