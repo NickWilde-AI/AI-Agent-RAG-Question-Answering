@@ -348,6 +348,11 @@ python scripts/build_gold_candidates.py --pages data/user_pages.json
 python scripts/gold_review_server.py
 # 浏览器打开 http://127.0.0.1:8765
 
+# 也可以导入ChatGPT等外部模型生成的页码型JSON
+python scripts/import_gold_json.py \
+  --input data/gold_review/import/中科创达金标问答100.json \
+  --document 中科创达智能汽车业务介绍
+
 # 3. 导出不可变金标版本
 python scripts/export_gold_dataset.py --tag first-gold
 
