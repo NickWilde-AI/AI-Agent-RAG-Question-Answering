@@ -52,9 +52,9 @@ flowchart LR
 
 | 模块 | 能力说明 |
 |------|----------|
-| **检索** | Agentic query expansion、RRF 多路融合、类型预过滤、向量 + 词面混合打分；可选远程 embedding / Milvus、可选 ColPali 视觉 rerank |
+| **检索** | 文档聚合粗排 → 页级候选池、Agentic query expansion、BM25 + 向量 + RRF；当前可用千问 API 视觉重排，将来可无缝切换 ColPali |
 | **路由** | 三分支：`fact` / `multi` / `chart`；规则优先，可选 LLM / Function Calling |
-| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`，支持多页与 Excel 多 Sheet 证据合并；页图问题可将 top-3 候选页联合交给在线 VLM 判读 |
+| **工具链** | `fact_qa` / `multi_page_qa` / `chart_qa`；粗召回与视觉重排后将少量页图交给 VLM，并绑定真实文件名、页码和 page_id |
 | **校验** | 规则可证性 + 可选 LLM / VLM 校验；失败可扩 top-k 或分支 fallback 重试 |
 | **编排** | 默认 `QAEngine` 主链路；已接入 `LangGraphQAEngine`（`RAG_ENABLE_LANGGRAPH=true` 可切换）；内置 Agentic critique → refine-query → retry；可选 `PlanExecuteAgentLoop`（多轮 retrieve–verify） |
 | **可观测** | `/ask` 返回 `trace`；`/ask/stream` 以 SSE 实时推送路由、检索、生成、校验与重试事件；`/metrics` 暴露 Router / Verifier / 缓存等指标 |
@@ -76,6 +76,10 @@ flowchart LR
 - **工程治理**：Prometheus 指标、离线评测、熔断降级、灰度发布、故障回放和 Docker/GPU 部署覆盖上线与持续迭代链路。
 
 具体容量由文档结构、模型规格、检索后端、GPU 吞吐和部署副本数共同决定，仓库提供压测与评测入口用于生成对应环境的容量基线。
+
+### API 过渡与自部署切换
+
+`--qwen` 当前采用“较大候选集粗召回 → 千问 VL API 视觉重排 → top-k 页图生成 → flash 校验”。Embedding、Milvus、ColPali 和 VLM Gateway 仍使用稳定适配接口；GPU 服务器就绪后只需配置 `RAG_MULTIMODAL_EMBEDDING_API`、`RAG_COLPALI_RERANK_API`、`RAG_VLM_API` 并打开对应开关，无需改写 Agent 业务链路。
 
 ---
 
@@ -152,7 +156,7 @@ bash scripts/one_click_demo.sh
 
 ```bash
 bash scripts/one_click_demo.sh --api       # 使用 .env 中的 OpenAI-compatible API
-bash scripts/one_click_demo.sh --qwen      # 千问文本生成 + 千问 VL 页面视觉解析
+bash scripts/one_click_demo.sh --qwen      # 千问解析 + API 视觉重排 + 页图生成/校验
 bash scripts/one_click_demo.sh --full      # API + Redis + ColPali（需 Docker/GPU）
 bash scripts/one_click_demo.sh --status    # 查看状态
 bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
@@ -166,7 +170,7 @@ bash scripts/one_click_demo.sh --stop      # 停止脚本启动的服务
 |------|------|------|
 | 轻量（默认） | `bash scripts/one_click_demo.sh` | `RAG_LITE_MODE=1`：不拉 ColPali、不启 Docker Redis，关闭重型 embedding / rerank / Loop |
 | 全量链路 | `bash scripts/one_click_demo.sh --full` | ColPali + Redis 等（需本机或 GPU 云资源） |
-| 千问增强 | `bash scripts/one_click_demo.sh --qwen` | 复用 DashScope 配置；本地抽取文字，扫描页/图片/复杂图表由千问 VL 增强 |
+| 千问增强 | `bash scripts/one_click_demo.sh --qwen` | 复用 DashScope；千问负责建库视觉解析、候选页视觉重排、答案生成与校验 |
 
 千问增强配置：
 

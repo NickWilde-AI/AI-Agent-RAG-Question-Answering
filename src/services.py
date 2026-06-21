@@ -101,6 +101,7 @@ class VLMClient:
     api_url: str = SETTINGS.vlm_api
     _direct: QwenVisionInferenceClient = field(default_factory=QwenVisionInferenceClient,init=False,repr=False)
     _verifier_direct: QwenVisionInferenceClient = field(default_factory=lambda:QwenVisionInferenceClient(model=SETTINGS.qwen_vlm_verifier_model),init=False,repr=False)
+    _reranker_direct: QwenVisionInferenceClient = field(default_factory=lambda:QwenVisionInferenceClient(model=SETTINGS.qwen_vlm_rerank_model),init=False,repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -128,18 +129,37 @@ class VLMClient:
         if SETTINGS.enable_vlm_circuit_breaker:
             _VLM_CB.record_success()
 
-    def answer(self, query: str, image_paths: List[str], mode: str) -> str:
+    def answer(self, query: str, image_paths: List[str], mode: str, evidence_context: str = "") -> str:
         self._guard_before_call()
         try:
             if not self.api_url:
-                answer=self._direct.answer(query,image_paths,mode)
+                try:
+                    answer=self._direct.answer(query,image_paths,mode,evidence_context)
+                except TypeError:
+                    # 兼容既有自部署 VLM adapter 的三参数 answer 接口。
+                    answer=self._direct.answer(query,image_paths,mode)
                 self._record_success(); return answer
-            data = post_json(self.api_url, {"query": query, "image_paths": image_paths, "mode": mode})
+            data = post_json(self.api_url, {"query": query, "image_paths": image_paths, "mode": mode,"evidence_context":evidence_context})
             self._record_success()
             return str(data.get("answer", "")).strip()
         except Exception:
             self._record_failure()
             raise
+
+    def rerank_pages(self,query: str,pages: List[Dict[str, Any]]) -> Dict[str,float]:
+        """统一视觉重排接口：当前可走千问 API，将来可由 RAG_VLM_API 网关代理自部署模型。"""
+        if not pages: return {}
+        self._guard_before_call()
+        try:
+            if not self.api_url:
+                scores=self._reranker_direct.rerank(query,pages)
+            else:
+                data=post_json(self.api_url,{"query":query,"pages":pages,"mode":"visual_rerank"})
+                scores=data.get("scores",{})
+            self._record_success()
+            return {str(k):float(v) for k,v in scores.items()}
+        except Exception:
+            self._record_failure(); raise
 
     def verify(self, query: str, answer: str, image_paths: List[str]) -> Optional[bool]:
         self._guard_before_call()

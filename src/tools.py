@@ -41,6 +41,17 @@ def _doc_full_name(page: Page) -> str:
     return page.doc_id
 
 
+def _visual_evidence_context(pages: List[Page]) -> str:
+    """把候选顺序与真实文件/页码绑定，避免模型把第一个候选误写成文档第 1 页。"""
+    lines=[]
+    for index,page in enumerate(pages,1):
+        page_label=str(page.page_no) if page.page_no is not None else "未知"
+        lines.append(
+            f"候选{index}：文件={_doc_full_name(page)}；真实页码={page_label}；page_id={page.page_id}"
+        )
+    return "\n".join(lines)
+
+
 def _fact_fallback_formatted(query: str, pages: List[Page]) -> str:
     """
     LLM / VLM 不可用时的兜底：固定分段排版，避免把 raw chunk 糊成一整坨。
@@ -108,10 +119,11 @@ def fact_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None) -> s
                             return f"依据文档：{_doc_full_name(page)}\n{sentence.strip()}"
 
     vlm = VLMClient()
-    image_paths=[page.image_path for page in pages if page.image_path]
+    image_pages=[page for page in pages if page.image_path][:3]
+    image_paths=[page.image_path for page in image_pages]
     if image_paths and vlm.enabled:
         try:
-            answer=vlm.answer(query=query,image_paths=image_paths[:3],mode="fact_top3")
+            answer=vlm.answer(query=query,image_paths=image_paths,mode="fact_top3",evidence_context=_visual_evidence_context(image_pages))
             if answer: return answer
         except Exception:
             pass
@@ -167,11 +179,12 @@ def multi_page_qa(query: str, pages: List[Page], llm: Optional[LLMClient] = None
     这里简化成：从多页 people 列表中找最可能的人名。
     真实系统会使用多图 VLM 进行跨页关联推理。
     """
-    image_paths = [p.image_path for p in pages if p.image_path]
+    image_pages = [p for p in pages if p.image_path][:3]
+    image_paths = [p.image_path for p in image_pages]
     vlm = VLMClient()
     if image_paths and vlm.enabled:
         try:
-            answer = vlm.answer(query=query, image_paths=image_paths[:3], mode="multi_page")
+            answer = vlm.answer(query=query, image_paths=image_paths, mode="multi_page",evidence_context=_visual_evidence_context(image_pages))
             if answer:
                 return answer
         except Exception as exc:
@@ -222,7 +235,8 @@ def chart_qa(query: str, pages: List[Page]) -> str:
     - 若 query 包含“最高/最大”，返回最大值对应项
     - 否则返回最相关项或默认项
     """
-    image_paths = [p.image_path for p in pages if p.image_path]
+    image_pages = [p for p in pages if p.image_path][:3]
+    image_paths = [p.image_path for p in image_pages]
     parser = ChartParsingClient()
     merged: Dict[str, float] = {}
     if image_paths and parser.enabled:
@@ -239,7 +253,7 @@ def chart_qa(query: str, pages: List[Page]) -> str:
         vlm=VLMClient()
         if image_paths and vlm.enabled:
             try:
-                answer=vlm.answer(query=query,image_paths=image_paths[:2],mode="chart")
+                answer=vlm.answer(query=query,image_paths=image_paths[:2],mode="chart",evidence_context=_visual_evidence_context(image_pages[:2]))
                 if answer: return answer
             except Exception:
                 pass

@@ -261,23 +261,35 @@ class QAEngine:
         """
         白话：检索只命中了几页，但「答题 / 校验」有时需要**同一文件里更多页**一起看。
 
-        - 先看「排第一的那条命中」属于哪个文档（doc_id）、什么扩展名。
-        - 从全库 `retriever.pages` 里捞出**同一 doc_id** 的所有页，按页码排序。
+        - 普通文档先保留全部 top-k 命中，再按各命中补相邻页，避免第一份文档吞掉跨文档证据。
+        - 表格仍按第一命中文件合并全部 sheet。
         - Excel/CSV：表格题常要跨 sheet，最多取 80 页一起当材料。
         - 普通 PDF 等：命中页放前面，同文档其余页放后面，总共最多 8 页（控制长度）。
         """
         if not hit_pages:
             return []
-        p0 = hit_pages[0]  # 「主命中」：代表用户最可能想问的那份文档
+        p0 = hit_pages[0]
         ext = Path(p0.source_file).suffix.lower() if p0.source_file else ""
         merged = [p for p in self.retriever.pages if p.doc_id == p0.doc_id]
         merged.sort(key=lambda x: (x.page_no is None, x.page_no or 0))
         if ext in {".xlsx", ".xls", ".csv"}:
             return merged[:80]
-        hit_ids = {hp.page_id for hp in hit_pages}
-        front = [p for p in merged if p.page_id in hit_ids]
-        rest = [p for p in merged if p.page_id not in hit_ids]
-        ordered = front + rest
+        # 先完整保留跨文档 top-k 命中；旧实现只展开第一名所属文档，会把后续正确命中静默丢掉。
+        ordered: List[Page] = []
+        seen=set()
+        for page in hit_pages:
+            if page.page_id not in seen:
+                ordered.append(page); seen.add(page.page_id)
+        # 再为每个命中补相邻页面，支持上下文连续性，同时避免第一份文档垄断证据窗口。
+        for anchor in hit_pages:
+            neighbors=[p for p in self.retriever.pages if p.doc_id==anchor.doc_id and p.page_id not in seen]
+            if anchor.page_no is not None:
+                neighbors.sort(key=lambda p:(abs((p.page_no or 0)-anchor.page_no),p.page_no or 0))
+            else:
+                neighbors.sort(key=lambda p:(p.page_no is None,p.page_no or 0))
+            for page in neighbors:
+                ordered.append(page); seen.add(page.page_id)
+                if len(ordered)>=8: return ordered
         return ordered[:8]
 
     def _evidence_pages_for_verify(self, branch: str, hits: List[RetrievalHit]) -> List[Page]:

@@ -60,7 +60,7 @@ from .infra.vector_store import BaseVectorStore, InMemoryVectorStore, MilvusVect
 from .infra.embedding_cache import JSONEmbeddingCache
 from .llm_client import LLMClient
 from .models import Page, RetrievalHit
-from .services import ColPaliRerankClient, MultimodalEmbeddingClient
+from .services import ColPaliRerankClient, MultimodalEmbeddingClient, VLMClient
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -168,6 +168,7 @@ class PageRetriever:
         self.llm_client = llm_client
         self.multimodal_client = MultimodalEmbeddingClient()
         self.rerank_client = ColPaliRerankClient()
+        self.visual_rerank_client = VLMClient()
         self.vector_store = vector_store or self._build_vector_store()
         self.page_vectors: Dict[str, np.ndarray] = {}
         self.id_to_page: Dict[str, Page] = {p.page_id: p for p in pages}
@@ -458,6 +459,13 @@ class PageRetriever:
             q_plain = query_text.strip()
             if q_plain and q_plain in (page.content or ""):
                 score += 0.35
+            # “第 N 页 / p.N”是通用检索约束，不绑定任何具体文档；只做加权，不做全库硬过滤。
+            requested_pages = {
+                int(value)
+                for value in re.findall(r"(?:第\s*|p\.?\s*)(\d{1,5})\s*页?", query_text, flags=re.I)
+            }
+            if requested_pages and page.page_no in requested_pages:
+                score += 0.75
             scored.append(RetrievalHit(page_id=page.page_id, score=score))
         scored.sort(key=lambda x: x.score, reverse=True)
         return scored
@@ -505,6 +513,78 @@ class PageRetriever:
                 deferred.append(hit)
         return selected + deferred
 
+    def _hierarchical_page_candidates(self,hits: List[RetrievalHit]) -> List[RetrievalHit]:
+        """先按文档聚合粗排，再在高相关文档内保留页面；为未来独立文档索引保留同一边界。"""
+        if not SETTINGS.enable_hierarchical_retrieval or not hits:
+            return hits
+        by_doc: Dict[str,List[RetrievalHit]] = defaultdict(list)
+        for hit in hits:
+            page=self.id_to_page.get(hit.page_id)
+            by_doc[page.doc_id if page else hit.page_id].append(hit)
+        doc_scores=[]
+        for doc_id,doc_hits in by_doc.items():
+            ordered=sorted(doc_hits,key=lambda item:item.score,reverse=True)
+            score=ordered[0].score + 0.15 * sum(item.score for item in ordered[1:3])
+            doc_scores.append((doc_id,score))
+        doc_scores.sort(key=lambda item:item[1],reverse=True)
+        doc_limit=max(1,SETTINGS.retrieval_candidate_docs)
+        selected_docs={doc_id for doc_id,_ in doc_scores[:doc_limit]}
+        selected=[hit for hit in hits if (self.id_to_page.get(hit.page_id).doc_id if self.id_to_page.get(hit.page_id) else hit.page_id) in selected_docs]
+        deferred=[hit for hit in hits if hit not in selected]
+        selected.sort(key=lambda hit:hit.score,reverse=True)
+        return selected + deferred
+
+    @staticmethod
+    def _blend_rerank_scores(candidates: List[RetrievalHit],scores: Dict[str,float]) -> List[RetrievalHit]:
+        """把不同模型的绝对分数转成稳定的名次分再融合，避免 ColPali/Qwen 分数尺度不一致。"""
+        if not candidates or not scores: return candidates
+        visual_order=sorted(scores,key=lambda page_id:scores[page_id],reverse=True)
+        visual_rank={page_id:rank for rank,page_id in enumerate(visual_order,1)}
+        total=max(len(candidates),1); weight=min(max(SETTINGS.visual_rerank_weight,0.0),1.0)
+        blended=[]
+        for coarse_rank,hit in enumerate(candidates,1):
+            coarse=1.0-(coarse_rank-1)/total
+            rank=visual_rank.get(hit.page_id,total+1)
+            visual=0.0 if rank>total else 1.0-(rank-1)/total
+            blended.append(RetrievalHit(hit.page_id,(1.0-weight)*coarse+weight*visual))
+        blended.sort(key=lambda hit:hit.score,reverse=True)
+        return blended
+
+    @staticmethod
+    def _query_anchor_terms(query: str) -> List[str]:
+        """抽取产品名、缩写、编号等高区分度锚点，用于视觉重排候选的精确召回配额。"""
+        patterns=(
+            r"[\u4e00-\u9fff]{1,8}[A-Za-z][A-Za-z0-9+._/-]*",
+            r"[A-Za-z][A-Za-z0-9+._/-]*[\u4e00-\u9fff]{1,8}",
+            r"[A-Za-z0-9]+(?:[+._/-][A-Za-z0-9]+)+",
+            r"[A-Za-z][A-Za-z0-9+._/-]{1,}",
+            r"[A-Z]{2,}[A-Z0-9_-]*",
+        )
+        terms=[]
+        for pattern in patterns:
+            for term in re.findall(pattern,query):
+                normalized=term.strip()
+                if len(normalized)>=2 and normalized.lower() not in {x.lower() for x in terms}:
+                    terms.append(normalized)
+        return terms
+
+    def _visual_rerank_shortlist(self,query: str,candidates: List[RetrievalHit],cap: int) -> List[RetrievalHit]:
+        """混合采样：一半取融合粗排，一半取精确锚点/BM25，避免小 API 配额只看到同类噪声。"""
+        if cap<=0 or len(candidates)<=cap: return candidates[:max(cap,0)]
+        coarse_n=max(1,cap//2); selected=list(candidates[:coarse_n]); selected_ids={hit.page_id for hit in selected}
+        anchors=self._query_anchor_terms(query)
+        query_tokens=_tokenize(query)
+        lexical=[]
+        for hit in candidates:
+            if hit.page_id in selected_ids: continue
+            page=self.id_to_page[hit.page_id]; content=(page.content or "").lower()
+            exact=sum(1 for term in anchors if term.lower() in content)
+            bm25=self._bm25_score_page(query_tokens,hit.page_id)
+            lexical.append((exact,bm25,hit.score,hit))
+        lexical.sort(key=lambda item:(item[0],item[1],item[2]),reverse=True)
+        selected.extend(item[3] for item in lexical[:cap-len(selected)])
+        return selected
+
     def retrieve(self, query: str, topk: int = SETTINGS.topk_default, doc_type: Optional[str] = None) -> Tuple[str, List[RetrievalHit]]:
         """
         在线检索（你可以把它当成“召回服务”的主逻辑）。
@@ -527,8 +607,8 @@ class PageRetriever:
             q_vec = self._embed_text(variant)
             external_embed_failed = external_embed_failed or self._external_embed_failed
             variant_vectors.append((variant, q_vec))
-        use_bm25 = SETTINGS.enable_bm25_fallback and external_embed_failed
-        if use_bm25:
+        use_bm25 = SETTINGS.enable_hybrid_bm25 or (SETTINGS.enable_bm25_fallback and external_embed_failed)
+        if SETTINGS.enable_bm25_fallback and external_embed_failed:
             BM25_FALLBACK_COUNT.inc()
 
         ranked_lists: List[List[RetrievalHit]] = []
@@ -545,13 +625,19 @@ class PageRetriever:
                 )
             )
 
-        scored = self._fuse_ranked_hits(ranked_lists)
-        scored = self._apply_doc_diversity(scored, SETTINGS.retrieval_diversity_per_doc)
-        if self.rerank_client.enabled and scored:
+        scored = self._hierarchical_page_candidates(self._fuse_ranked_hits(ranked_lists))
+        candidate_limit=max(topk,SETTINGS.retrieval_candidate_pages)
+        candidate_pool=scored[:candidate_limit]
+        rerank_backend=""
+        if (self.rerank_client.enabled or (SETTINGS.enable_visual_rerank and self.visual_rerank_client.enabled)) and candidate_pool:
             try:
                 rerank_candidates = []
-                cap = min(max(topk * 3, topk), SETTINGS.colpali_rerank_max_pages * 2)
-                for hit in scored[:cap]:
+                if self.rerank_client.enabled:
+                    cap=min(len(candidate_pool),max(1,SETTINGS.colpali_rerank_max_pages)); rerank_backend="colpali"
+                else:
+                    cap=min(len(candidate_pool),max(1,SETTINGS.visual_rerank_candidate_pages)); rerank_backend="qwen_api"
+                rerank_hits=self._visual_rerank_shortlist(query,candidate_pool,cap)
+                for hit in rerank_hits:
                     page = self.id_to_page[hit.page_id]
                     if page.image_path:
                         rerank_candidates.append(
@@ -559,27 +645,37 @@ class PageRetriever:
                                 "page_id": page.page_id,
                                 "image_path": page.image_path,
                                 "doc_id": page.doc_id,
+                                "source_file": Path(page.source_file).name if page.source_file else page.doc_id,
+                                "page_no": page.page_no,
                             }
                         )
-                rerank_scores = self.rerank_client.rerank_pages(rewritten_query, rerank_candidates)
-                scored = [
-                    RetrievalHit(page_id=h.page_id, score=0.5 * h.score + 0.5 * rerank_scores.get(h.page_id, h.score))
-                    for h in scored
-                ]
-                scored.sort(key=lambda x: x.score, reverse=True)
+                if self.rerank_client.enabled:
+                    rerank_scores=self.rerank_client.rerank_pages(query,rerank_candidates)
+                else:
+                    rerank_scores=self.visual_rerank_client.rerank_pages(query,rerank_candidates)
+                reranked=self._blend_rerank_scores(rerank_hits,rerank_scores)
+                reranked_ids={hit.page_id for hit in reranked}
+                candidate_pool=reranked+[hit for hit in candidate_pool if hit.page_id not in reranked_ids]
+                candidate_ids={hit.page_id for hit in candidate_pool}
+                scored=candidate_pool+[hit for hit in scored if hit.page_id not in candidate_ids]
             except Exception as exc:
                 if SETTINGS.sentry_dsn:
                     with sentry_sdk.push_scope() as scope:
                         scope.set_tag("component", "retriever")
                         scope.set_tag("phase", "colpali_rerank")
                         sentry_sdk.capture_exception(exc)
+        scored = self._apply_doc_diversity(scored, SETTINGS.retrieval_diversity_per_doc)
         self.last_diagnostics = {
             "query_variants": str(len(query_variants)),
             "variants": " | ".join(query_variants),
             "doc_type": inferred_doc_type or "",
             "fusion": "rrf" if len(query_variants) > 1 else "single",
             "diversity_per_doc": str(SETTINGS.retrieval_diversity_per_doc),
-            "bm25_fallback": str(use_bm25).lower(),
+            "hybrid_bm25": str(use_bm25).lower(),
+            "bm25_fallback": str(SETTINGS.enable_bm25_fallback and external_embed_failed).lower(),
+            "candidate_pages": str(min(len(scored),candidate_limit)),
+            "candidate_docs": str(SETTINGS.retrieval_candidate_docs),
+            "visual_rerank": rerank_backend or "disabled",
         }
         return rewritten_query, scored[:topk]
 

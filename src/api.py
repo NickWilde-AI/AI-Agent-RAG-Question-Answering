@@ -186,6 +186,14 @@ def capabilities() -> Dict[str, Any]:
         "multimodal_embedding": bool(SETTINGS.enable_multimodal_embedding and SETTINGS.multimodal_embedding_api),
         "milvus": isinstance(engine.retriever.vector_store, MilvusVectorStore),
         "colpali_rerank": bool(SETTINGS.enable_colpali_rerank and SETTINGS.colpali_rerank_api),
+        "visual_rerank": bool(SETTINGS.enable_visual_rerank and VLMClient().enabled),
+        "visual_rerank_backend": (
+            "colpali" if SETTINGS.enable_colpali_rerank and SETTINGS.colpali_rerank_api
+            else "qwen_api" if SETTINGS.enable_visual_rerank and VLMClient().enabled
+            else "disabled"
+        ),
+        "hierarchical_retrieval": SETTINGS.enable_hierarchical_retrieval,
+        "hybrid_bm25": SETTINGS.enable_hybrid_bm25,
         "function_calling_router": bool(SETTINGS.enable_function_calling_router and SETTINGS.openai_api_key),
         "langgraph": SETTINGS.enable_langgraph,
         "vlm": VLMClient().enabled,

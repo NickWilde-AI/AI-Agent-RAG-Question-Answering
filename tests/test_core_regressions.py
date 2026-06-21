@@ -36,3 +36,49 @@ def test_direct_qwen_vlm_adapter(monkeypatch):
     assert client.enabled
     assert client.answer("问题",["page.png"],"single_page") == "视觉答案"
     assert client.verify("问题","视觉答案",["page.png"]) is True
+
+
+def test_explicit_page_number_is_a_generic_retrieval_signal():
+    pages=[
+        Page(page_id="d_p12",doc_id="d",doc_type="ppt",language="zh",content="相同的页面内容",page_no=12),
+        Page(page_id="d_p13",doc_id="d",doc_type="ppt",language="zh",content="相同的页面内容",page_no=13),
+    ]
+    _,hits=PageRetriever(pages).retrieve("请查看第13页",topk=1)
+    assert hits[0].page_id == "d_p13"
+
+
+def test_visual_rerank_blends_model_rank_without_binding_score_scale():
+    from src.models import RetrievalHit
+    candidates=[RetrievalHit("coarse_first",9.7),RetrievalHit("visual_first",0.2)]
+    reranked=PageRetriever._blend_rerank_scores(candidates,{"visual_first":0.99,"coarse_first":0.1})
+    assert reranked[0].page_id == "visual_first"
+
+
+def test_visual_shortlist_reserves_space_for_exact_product_anchor():
+    from src.models import RetrievalHit
+    pages=[Page(page_id=f"noise{i}",doc_id="noise",doc_type="ppt",language="zh",content="通用介绍") for i in range(8)]
+    pages.append(Page(page_id="exact",doc_id="target",doc_type="ppt",language="zh",content="AquaOS 三项核心能力"))
+    retriever=PageRetriever(pages)
+    candidates=[RetrievalHit(f"noise{i}",10-i) for i in range(8)]+[RetrievalHit("exact",0.1)]
+    shortlist=retriever._visual_rerank_shortlist("AquaOS是什么？",candidates,cap=4)
+    assert "exact" in {hit.page_id for hit in shortlist}
+
+
+def test_fact_evidence_keeps_cross_document_top_hits():
+    from src.bootstrap import build_engine_from_pages
+    pages=[
+        Page(page_id="a1",doc_id="a",doc_type="ppt",language="zh",content="噪声",page_no=1),
+        Page(page_id="a2",doc_id="a",doc_type="ppt",language="zh",content="邻页",page_no=2),
+        Page(page_id="b9",doc_id="b",doc_type="ppt",language="zh",content="正确证据",page_no=9),
+    ]
+    engine=build_engine_from_pages(pages)
+    evidence=engine._expand_pages_for_evidence([pages[0],pages[2]])
+    assert [page.page_id for page in evidence[:2]] == ["a1","b9"]
+
+
+def test_deployed_vlm_gateway_keeps_visual_rerank_interface(monkeypatch):
+    import src.services as services
+    monkeypatch.setattr(services,"post_json",lambda url,payload:{"scores":{"p2":0.9,"p1":0.2}})
+    client=services.VLMClient(api_url="http://vlm-gateway")
+    scores=client.rerank_pages("问题",[{"page_id":"p1"},{"page_id":"p2"}])
+    assert scores == {"p2":0.9,"p1":0.2}

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -113,14 +115,49 @@ class QwenVisionInferenceClient:
         )
         return (response.choices[0].message.content or "").strip()
 
-    def answer(self,query: str,image_paths: List[str],mode: str) -> str:
+    def answer(self,query: str,image_paths: List[str],mode: str,evidence_context: str = "") -> str:
         prompt=(
             "你是企业多模态知识库助手。只能依据随后页面图像回答，不得编造。"
             "先给出简洁结论，再用 Markdown 列表说明证据；涉及数字、人名、编号时必须逐字核对。"
             "如果页面不足以支持答案，明确写‘当前页图证据不足’，不要用外部知识补全。\n"
-            f"任务模式：{mode}\n用户问题：{query}"
+            "候选编号只是输入顺序，引用时必须使用证据清单中的真实文件名、真实页码和 page_id，"
+            "禁止把‘候选1’写成‘第1页’。\n"
+            f"任务模式：{mode}\n用户问题：{query}\n证据清单：\n{evidence_context or '未提供'}"
         )
         return self._complete(prompt,image_paths)
+
+    def rerank(self,query: str,candidates: List[dict]) -> dict:
+        """用千问 API 对小候选集做视觉相关性重排；部署 ColPali 后可由外部适配器替换。"""
+        if not self.client: raise RuntimeError("Qwen vision inference is not configured")
+        content=[{"type":"text","text":(
+            "你是多模态检索重排器。判断每个候选页面能否直接支持回答用户问题。"
+            "只返回严格 JSON，不回答问题，不使用外部知识。格式："
+            '{"scores":{"page_id":0.0}}。分数范围 0 到 1；精确术语、数字、图表或架构证据越完整分数越高。\n'
+            f"用户问题：{query}"
+        )}]
+        valid=[]
+        for index,item in enumerate(candidates,1):
+            path=str(item.get("image_path") or "")
+            if not path or not Path(path).exists(): continue
+            page_id=str(item.get("page_id") or f"candidate_{index}")
+            valid.append(page_id)
+            content.append({"type":"text","text":(
+                f"候选{index}｜page_id={page_id}｜文件={item.get('source_file','')}｜"
+                f"真实页码={item.get('page_no','未知')}"
+            )})
+            content.append({"type":"image_url","image_url":{"url":QwenVisionPageParser._data_url(path)}})
+        if not valid: return {}
+        response=self.client.chat.completions.create(
+            model=self.model,messages=[{"role":"user","content":content}],temperature=0
+        )
+        raw=(response.choices[0].message.content or "").strip()
+        match=re.search(r"\{[\s\S]*\}",raw)
+        if not match: return {}
+        payload=json.loads(match.group(0)); scores=payload.get("scores",payload)
+        return {
+            str(page_id):max(0.0,min(1.0,float(score)))
+            for page_id,score in scores.items() if str(page_id) in valid
+        }
 
     def verify(self,query: str,answer: str,image_paths: List[str]) -> Optional[bool]:
         result=self._complete(
