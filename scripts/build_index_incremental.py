@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
@@ -101,6 +102,15 @@ def file_key(file_path: Path, input_dir: Path) -> str:
         return str(file_path.resolve())
 
 
+@lru_cache(maxsize=4096)
+def _content_sha256(path: str,mtime_ns: int,size: int) -> str:
+    """按内容计算文件指纹；mtime/size 只用于本次进程内缓存键。"""
+    digest=hashlib.sha256()
+    with Path(path).open("rb") as fp:
+        for chunk in iter(lambda:fp.read(1024*1024),b""): digest.update(chunk)
+    return digest.hexdigest()
+
+
 def file_signature(file_path: Path, doc_id: str, dpi: int, render_images: bool) -> Dict[str, str]:
     stat = file_path.stat()
     return {
@@ -113,6 +123,7 @@ def file_signature(file_path: Path, doc_id: str, dpi: int, render_images: bool) 
         "vision_parser": str(SETTINGS.enable_qwen_vision_parser).lower(),
         "vision_model": SETTINGS.vision_parser_model if SETTINGS.enable_qwen_vision_parser else "",
         "vision_mode": SETTINGS.vision_parse_mode if SETTINGS.enable_qwen_vision_parser else "",
+        "sha256": _content_sha256(str(file_path.resolve()),stat.st_mtime_ns,stat.st_size),
     }
 
 
@@ -128,7 +139,13 @@ def previous_signature(file_path: Path, input_dir: Path, old_manifest: Dict[str,
 def should_reindex(file_path: Path, input_dir: Path, doc_id: str, old_manifest: Dict[str, Dict[str, str]], dpi: int, render_images: bool) -> bool:
     new_sig = file_signature(file_path,doc_id,dpi,render_images)
     old_sig = previous_signature(file_path,input_dir,old_manifest,doc_id)
-    return old_sig != new_sig
+    if not old_sig: return True
+    profile_keys=("doc_id","ext","dpi","render_images","vision_parser","vision_model","vision_mode")
+    if any(old_sig.get(key,"")!=new_sig.get(key,"") for key in profile_keys): return True
+    # 新版以内容哈希为准：仅 touch/复制文件不会重复调用千问。
+    if old_sig.get("sha256"): return old_sig["sha256"]!=new_sig["sha256"]
+    # 兼容旧 manifest：原 mtime+size 一致则只补 SHA-256，不触发昂贵重建。
+    return old_sig.get("mtime")!=new_sig["mtime"] or old_sig.get("size")!=new_sig["size"]
 
 
 def scan_documents(input_dir: Path) -> List[Path]:

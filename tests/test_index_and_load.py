@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +33,11 @@ def test_lightweight_incremental_pdf_build_skips_images_and_second_parse(tmp_pat
     assert "重建文档 : 0  |  跳过 : 1" in second.stdout
     saved=json.loads(manifest.read_text(encoding="utf-8"))
     assert list(saved)==["sample.pdf"]
+    assert len(saved["sample.pdf"]["sha256"])==64
+    # 仅更新时间、内容不变时仍应命中 SHA-256 并跳过。
+    stat=(docs/"sample.pdf").stat(); os.utime(docs/"sample.pdf",(stat.st_atime,stat.st_mtime+10))
+    touched=subprocess.run(command,capture_output=True,text=True,check=True)
+    assert "重建文档 : 0  |  跳过 : 1" in touched.stdout
 
 
 def test_qwen_vision_parser_enriches_page_and_keeps_local_text(tmp_path,monkeypatch):

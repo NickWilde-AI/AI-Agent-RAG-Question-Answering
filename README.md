@@ -271,7 +271,7 @@ python scripts/build_index_incremental.py \
   --skip-page-images --clean-removed
 ```
 
-一键脚本的轻量模式默认启用该优化；全量多模态模式保留页图。可用 `RAG_BUILD_PAGE_IMAGES=1` 强制生成页图，或用 `RAG_BUILD_DPI=144` 调整 DPI。增量状态使用相对路径并逐文件 checkpoint，仓库移动或中途退出后也能正确续跑。
+一键脚本的轻量模式默认启用该优化；全量多模态模式保留页图。可用 `RAG_BUILD_PAGE_IMAGES=1` 强制生成页图，或用 `RAG_BUILD_DPI=144` 调整 DPI。增量状态使用相对路径、SHA-256 内容指纹和逐文件 checkpoint：日常始终执行同一条启动命令即可，内容与解析配置均未变化的文档会自动跳过；仅修改文件时间不会重复建库。
 
 重启 API 后即可检索新索引。
 
