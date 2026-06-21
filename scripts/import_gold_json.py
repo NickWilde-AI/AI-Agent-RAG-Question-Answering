@@ -32,6 +32,7 @@ def main() -> int:
     ap.add_argument("--input",required=True,help="JSON数组，字段含 query/gold_answer/page_nos/gold_branch/category")
     ap.add_argument("--document",required=True,help="页面索引中的源文件名关键词")
     ap.add_argument("--pages",default="data/user_pages.json"); ap.add_argument("--db",default="data/gold_review/review.db")
+    ap.add_argument("--trust-input",action="store_true",help="信任输入数据，导入后直接标记为accepted，跳过人工审核")
     args=ap.parse_args()
     rows=json.loads(Path(args.input).read_text(encoding="utf-8"))
     if not isinstance(rows,list): raise SystemExit("输入必须是 JSON 数组")
@@ -54,7 +55,9 @@ def main() -> int:
                      "source_files":[str(p.source_file or p.doc_id) for p in pages],"page_nos":[p.page_no for p in pages],
                      "image_paths":[str(p.image_path or "") for p in pages],"model_verified":False,
                      "model_reason":"外部模型生成，尚未经过本项目独立校验；需人工审核后才能进入正式金标集。"}
-            before=store.stats()["total"]; store.upsert_candidate(payload); after=store.stats()["total"]
+            before=store.stats()["total"]; cid=store.upsert_candidate(payload); after=store.stats()["total"]
+            if args.trust_input:
+                store.update_review(cid,"accepted",reviewer_note="通过 --trust-input 批量接受外部金标数据")
             imported+=int(after>before); skipped+=int(after==before)
         except Exception as exc:
             errors.append({"row":index,"error":str(exc)})

@@ -353,6 +353,12 @@ python scripts/import_gold_json.py \
   --input data/gold_review/import/中科创达金标问答100.json \
   --document 中科创达智能汽车业务介绍
 
+# 若确认外部数据可信，可跳过人工审核直接作为初版金标
+python scripts/import_gold_json.py \
+  --input data/gold_review/import/中科创达金标问答100.json \
+  --document 中科创达智能汽车业务介绍 \
+  --trust-input
+
 # 3. 导出不可变金标版本
 python scripts/export_gold_dataset.py --tag first-gold
 
