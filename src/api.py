@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -57,6 +57,7 @@ from .infra.redis_memory import RedisSessionMemory
 from .infra.vector_store import MilvusVectorStore
 from .research import InProcessJobDispatcher, RESEARCH_JOBS, ResearchExecutor
 from .research_models import ResearchJob, to_dict, utc_now
+from .auth import ANONYMOUS_ACTOR, Actor, AuthenticationError, actor_from_bearer
 import os
 import re
 import shutil
@@ -100,6 +101,41 @@ research_executor = ResearchExecutor(research_repository)
 research_dispatcher = InProcessJobDispatcher(research_executor)
 
 
+def _current_actor(authorization: Optional[str] = Header(default=None)) -> Actor:
+    if not SETTINGS.enable_auth: return ANONYMOUS_ACTOR
+    try: return actor_from_bearer(authorization or "",SETTINGS.jwt_secret,SETTINGS.jwt_issuer,SETTINGS.jwt_audience)
+    except AuthenticationError as exc: raise HTTPException(401,detail={"code":"unauthorized","message":str(exc)},headers={"WWW-Authenticate":"Bearer"}) from exc
+
+
+def _require_workspace(workspace_id: str, actor: Actor, write: bool = False) -> Dict[str, Any]:
+    ws=research_repository.get_workspace(workspace_id)
+    if not ws: raise _not_found("workspace")
+    if not SETTINGS.enable_auth or actor.is_admin: return ws
+    role=research_repository.workspace_role(workspace_id,list(actor.acl_subjects))
+    if role is None or (write and role not in {"editor","owner"}):
+        raise HTTPException(403,detail={"code":"forbidden","message":"workspace access denied"})
+    return ws
+
+
+def _require_workspace_owner(workspace_id: str, actor: Actor) -> Dict[str, Any]:
+    ws=_require_workspace(workspace_id,actor)
+    if SETTINGS.enable_auth and not actor.is_admin and research_repository.workspace_role(workspace_id,list(actor.acl_subjects))!="owner":
+        raise HTTPException(403,detail={"code":"forbidden","message":"workspace owner role is required"})
+    return ws
+
+
+def _require_client(client_id: str, actor: Actor) -> None:
+    if SETTINGS.enable_auth and not actor.is_admin and client_id!=actor.subject:
+        raise HTTPException(403,detail={"code":"forbidden","message":"client_id must match JWT subject"})
+
+
+def _require_job(job_id: str, actor: Actor, write: bool = False) -> Dict[str, Any]:
+    job=research_repository.get_job(job_id)
+    if not job: raise _not_found("research_job")
+    _require_workspace(job["workspace_id"],actor,write)
+    return job
+
+
 class AskRequest(BaseModel):
     """问答请求模型。"""
 
@@ -115,6 +151,11 @@ class WorkspaceCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     use_demo: bool = Field(default=True, description="是否把内置 demo pages 纳入本空间")
+
+
+class WorkspaceGrantRequest(BaseModel):
+    subject: str = Field(...,min_length=6,max_length=200,description="user:<id> 或 group:<id>")
+    role: str = Field(...,description="viewer / editor / owner")
 
 
 class ResearchJobRequest(BaseModel):
@@ -209,7 +250,11 @@ def capabilities() -> Dict[str, Any]:
         "redis_memory": isinstance(engine.memory, RedisSessionMemory),
         "session_cache": SETTINGS.enable_session_cache,
         "workspace": True,
+        "workspace_acl": True,
+        "jwt_auth_enabled": SETTINGS.enable_auth,
         "research_jobs": True,
+        "research_langgraph": SETTINGS.enable_research_langgraph,
+        "mcp_server": True,
         "research_sse_events": True,
         "anonymous_conversations": True,
         "qwen_vision_parser": bool(SETTINGS.enable_qwen_vision_parser and SETTINGS.effective_openai_api_key),
@@ -257,50 +302,68 @@ def _validate_document_container(path: Path, suffix: str) -> None:
 
 
 @app.post("/workspaces", status_code=201)
-def create_workspace(req: WorkspaceCreateRequest) -> Dict[str, Any]:
-    return research_repository.create_workspace(req.name.strip(), req.description.strip(), req.use_demo)
+def create_workspace(req: WorkspaceCreateRequest, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    return research_repository.create_workspace(req.name.strip(), req.description.strip(), req.use_demo,actor.subject if SETTINGS.enable_auth else "")
 
 
 @app.get("/workspaces")
-def list_workspaces() -> List[Dict[str, Any]]: return research_repository.list_workspaces()
+def list_workspaces(actor: Actor = Depends(_current_actor)) -> List[Dict[str, Any]]:
+    return research_repository.list_workspaces(None if not SETTINGS.enable_auth or actor.is_admin else list(actor.acl_subjects))
 
 
 @app.get("/workspaces/{workspace_id}")
-def get_workspace(workspace_id: str) -> Dict[str, Any]:
-    ws=research_repository.get_workspace(workspace_id)
-    if not ws: raise _not_found("workspace")
+def get_workspace(workspace_id: str, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    ws=_require_workspace(workspace_id,actor)
     ws["documents"]=research_repository.list_documents(workspace_id); return ws
 
 
+@app.get("/workspaces/{workspace_id}/acl")
+def list_workspace_acl(workspace_id: str,actor: Actor = Depends(_current_actor)) -> List[Dict[str,str]]:
+    _require_workspace_owner(workspace_id,actor)
+    return research_repository.list_workspace_acl(workspace_id)
+
+
+@app.put("/workspaces/{workspace_id}/acl")
+def grant_workspace_acl(workspace_id: str,req: WorkspaceGrantRequest,actor: Actor = Depends(_current_actor)) -> Dict[str,str]:
+    _require_workspace_owner(workspace_id,actor)
+    subject=req.subject.strip(); role=req.role.strip().lower()
+    try: research_repository.grant_workspace_access(workspace_id,subject,role)
+    except ValueError as exc: raise HTTPException(400,detail={"code":"invalid_acl","message":str(exc)}) from exc
+    return {"workspace_id":workspace_id,"subject":subject,"role":role}
+
+
 @app.post("/conversations",status_code=201)
-def create_conversation(req: ConversationCreateRequest) -> Dict[str, Any]:
-    if req.workspace_id and not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
+def create_conversation(req: ConversationCreateRequest, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    _require_client(req.client_id,actor)
+    if req.workspace_id: _require_workspace(req.workspace_id,actor)
     return research_repository.create_conversation(req.client_id,req.workspace_id,req.title.strip() or "新对话")
 
 
 @app.get("/conversations")
-def list_conversations(client_id: str,limit: int = 100) -> List[Dict[str, Any]]:
+def list_conversations(client_id: str,limit: int = 100,actor: Actor = Depends(_current_actor)) -> List[Dict[str, Any]]:
+    _require_client(client_id,actor)
     if not 8<=len(client_id)<=128: raise HTTPException(400,detail={"code":"invalid_client_id","message":"client_id length must be 8..128"})
     return research_repository.list_conversations(client_id,limit)
 
 
 @app.get("/conversations/{conversation_id}/messages")
-def list_conversation_messages(conversation_id: str,client_id: str,limit: int = 200) -> List[Dict[str, Any]]:
+def list_conversation_messages(conversation_id: str,client_id: str,limit: int = 200,actor: Actor = Depends(_current_actor)) -> List[Dict[str, Any]]:
+    _require_client(client_id,actor)
     messages=research_repository.list_messages(conversation_id,client_id,limit)
     if messages is None: raise _not_found("conversation")
     return messages
 
 
 @app.delete("/conversations/{conversation_id}",status_code=204)
-def delete_conversation(conversation_id: str,client_id: str) -> Response:
+def delete_conversation(conversation_id: str,client_id: str,actor: Actor = Depends(_current_actor)) -> Response:
+    _require_client(client_id,actor)
     if not research_repository.delete_conversation(conversation_id,client_id): raise _not_found("conversation")
     return Response(status_code=204)
 
 
 @app.delete("/workspaces/{workspace_id}", status_code=204)
-def delete_workspace(workspace_id: str) -> Response:
-    ws=research_repository.get_workspace(workspace_id)
-    if not ws: raise _not_found("workspace")
+def delete_workspace(workspace_id: str, actor: Actor = Depends(_current_actor)) -> Response:
+    _require_workspace(workspace_id,actor,True)
     if research_repository.has_active_jobs(workspace_id):
         raise HTTPException(409,detail={"code":"workspace_busy","message":"cancel or finish active research jobs before deleting workspace"})
     # 级联删除数据库记录；上传文件位于独立空间目录并一并清理。
@@ -311,14 +374,14 @@ def delete_workspace(workspace_id: str) -> Response:
 
 
 @app.get("/workspaces/{workspace_id}/documents")
-def list_documents(workspace_id: str) -> List[Dict[str, Any]]:
-    if not research_repository.get_workspace(workspace_id): raise _not_found("workspace")
+def list_documents(workspace_id: str, actor: Actor = Depends(_current_actor)) -> List[Dict[str, Any]]:
+    _require_workspace(workspace_id,actor)
     return research_repository.list_documents(workspace_id)
 
 
 @app.post("/workspaces/{workspace_id}/documents", status_code=201)
-def upload_document(workspace_id: str, file: UploadFile = File(...)) -> Dict[str, Any]:
-    if not research_repository.get_workspace(workspace_id): raise _not_found("workspace")
+def upload_document(workspace_id: str, file: UploadFile = File(...), actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    _require_workspace(workspace_id,actor,True)
     raw_name=file.filename or ""
     if "/" in raw_name or "\\" in raw_name: raise HTTPException(400,detail={"code":"invalid_file","message":"path components are forbidden"})
     original=Path(raw_name).name
@@ -357,7 +420,8 @@ def upload_document(workspace_id: str, file: UploadFile = File(...)) -> Dict[str
 
 
 @app.delete("/workspaces/{workspace_id}/documents/{document_id}", status_code=204)
-def delete_document(workspace_id: str, document_id: str) -> Response:
+def delete_document(workspace_id: str, document_id: str, actor: Actor = Depends(_current_actor)) -> Response:
+    _require_workspace(workspace_id,actor,True)
     if research_repository.has_active_jobs(workspace_id):
         raise HTTPException(409,detail={"code":"workspace_busy","message":"cancel or finish active research jobs before deleting documents"})
     path=research_repository.delete_document(workspace_id,document_id)
@@ -367,8 +431,8 @@ def delete_document(workspace_id: str, document_id: str) -> Response:
 
 
 @app.post("/research/jobs", status_code=202)
-def submit_research(req: ResearchJobRequest) -> Dict[str, Any]:
-    if not research_repository.get_workspace(req.workspace_id): raise _not_found("workspace")
+def submit_research(req: ResearchJobRequest, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    _require_workspace(req.workspace_id,actor,True)
     job=ResearchJob(job_id=uuid.uuid4().hex,workspace_id=req.workspace_id,session_id=req.session_id,objective=req.objective.strip(),idempotency_key=req.idempotency_key)
     payload,created=research_repository.create_job(to_dict(job))
     if not created: return payload
@@ -381,15 +445,12 @@ def submit_research(req: ResearchJobRequest) -> Dict[str, Any]:
 
 
 @app.get("/research/jobs/{job_id}")
-def get_research_job(job_id: str) -> Dict[str, Any]:
-    job=research_repository.get_job(job_id)
-    if not job: raise _not_found("research_job")
-    return job
+def get_research_job(job_id: str, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]: return _require_job(job_id,actor)
 
 
 @app.get("/research/jobs/{job_id}/events")
-async def stream_research_events(job_id: str,request: Request,after: int = 0) -> StreamingResponse:
-    if not research_repository.get_job(job_id): raise _not_found("research_job")
+async def stream_research_events(job_id: str,request: Request,after: int = 0,actor: Actor = Depends(_current_actor)) -> StreamingResponse:
+    _require_job(job_id,actor)
     last_header=request.headers.get("last-event-id","")
     cursor=max(after,int(last_header) if last_header.isdigit() else 0)
     async def generate():
@@ -413,17 +474,16 @@ async def stream_research_events(job_id: str,request: Request,after: int = 0) ->
 
 
 @app.post("/research/jobs/{job_id}/cancel")
-def cancel_research_job(job_id: str) -> Dict[str, Any]:
-    if not research_repository.get_job(job_id): raise _not_found("research_job")
+def cancel_research_job(job_id: str, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]:
+    _require_job(job_id,actor,True)
     if not research_repository.request_cancel(job_id): raise HTTPException(409,detail={"code":"state_conflict","message":"job can no longer be cancelled"})
     RESEARCH_JOBS.labels(status="cancelled").inc()
     research_repository.append_event(job_id,"job_cancelled","cancelled","研究任务已取消",research_repository.get_job(job_id).get("progress",0))
     return research_repository.get_job(job_id) or {}
 
 
-def _report_or_409(job_id: str) -> Dict[str, Any]:
-    job=research_repository.get_job(job_id)
-    if not job: raise _not_found("research_job")
+def _report_or_409(job_id: str, actor: Actor = ANONYMOUS_ACTOR) -> Dict[str, Any]:
+    job=_require_job(job_id,actor)
     if job.get("status") != "completed": raise HTTPException(409,detail={"code":"report_not_ready","message":"report is only available for completed jobs"})
     report=research_repository.get_report(job_id)
     if not report: raise HTTPException(409,detail={"code":"report_not_ready","message":"report is not ready"})
@@ -431,18 +491,18 @@ def _report_or_409(job_id: str) -> Dict[str, Any]:
 
 
 @app.get("/research/jobs/{job_id}/report")
-def get_report(job_id: str) -> Dict[str, Any]: return _report_or_409(job_id)
+def get_report(job_id: str, actor: Actor = Depends(_current_actor)) -> Dict[str, Any]: return _report_or_409(job_id,actor)
 
 
 @app.get("/research/jobs/{job_id}/report.md")
-def get_report_markdown(job_id: str) -> Response:
-    report=_report_or_409(job_id); return Response(report["markdown_content"],media_type="text/markdown",headers={"Content-Disposition":f"attachment; filename={job_id}.md"})
+def get_report_markdown(job_id: str, actor: Actor = Depends(_current_actor)) -> Response:
+    report=_report_or_409(job_id,actor); return Response(report["markdown_content"],media_type="text/markdown",headers={"Content-Disposition":f"attachment; filename={job_id}.md"})
 
 
 @app.get("/research/jobs/{job_id}/report.html")
-def get_report_html(job_id: str) -> Response:
+def get_report_html(job_id: str, actor: Actor = Depends(_current_actor)) -> Response:
     return Response(
-        _report_or_409(job_id)["html_content"],
+        _report_or_409(job_id,actor)["html_content"],
         media_type="text/html",
         headers={
             "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
@@ -507,7 +567,7 @@ def eval_last() -> Dict[str, Any]:
     return {"exists": True, **payload}
 
 
-def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None) -> AskResponse:
+def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None,actor: Actor = ANONYMOUS_ACTOR) -> AskResponse:
     """核心问答实现；同步 JSON 与 SSE 入口共用，避免两套行为漂移。"""
     start = time.perf_counter()
     loop_steps: Optional[List[Dict[str, Any]]] = None
@@ -516,6 +576,7 @@ def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None) -> AskR
     conversation=None
     if req.conversation_id:
         if not req.client_id: raise HTTPException(400,detail={"code":"client_id_required","message":"client_id is required with conversation_id"})
+        _require_client(req.client_id,actor)
         conversation=research_repository.get_conversation(req.conversation_id,req.client_id)
         if not conversation: raise _not_found("conversation")
         if conversation.get("workspace_id") and req.workspace_id and conversation["workspace_id"]!=req.workspace_id:
@@ -524,7 +585,7 @@ def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None) -> AskR
     effective_workspace=req.workspace_id or (conversation.get("workspace_id") if conversation else None)
     try:
         if effective_workspace:
-            if not research_repository.get_workspace(effective_workspace): raise _not_found("workspace")
+            _require_workspace(effective_workspace,actor)
             scoped_engine=research_executor.build_workspace_engine(effective_workspace)
             response_engine=scoped_engine
             result=scoped_engine.ask(req.query,topk=req.topk or SETTINGS.topk_default,session_id=sid,event_callback=stage_callback)
@@ -620,13 +681,13 @@ def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None) -> AskR
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest) -> AskResponse:
+def ask(req: AskRequest, actor: Actor = Depends(_current_actor)) -> AskResponse:
     """兼容旧客户端的同步问答接口。"""
-    return _ask_impl(req)
+    return _ask_impl(req,actor=actor)
 
 
 @app.post("/ask/stream")
-async def ask_stream(req: AskRequest,request: Request) -> StreamingResponse:
+async def ask_stream(req: AskRequest,request: Request,actor: Actor = Depends(_current_actor)) -> StreamingResponse:
     """普通问答 SSE：实时推送路由、检索、生成、校验和重试阶段。"""
     stage_messages={
         "cache_hit":"命中会话缓存",
@@ -650,7 +711,7 @@ async def ask_stream(req: AskRequest,request: Request) -> StreamingResponse:
             }
             loop.call_soon_threadsafe(events.put_nowait,payload)
         yield "event: accepted\ndata: "+json.dumps({"stage":"accepted","message":"已接收问题，开始执行 Agent"},ensure_ascii=False)+"\n\n"
-        task=asyncio.create_task(asyncio.to_thread(_ask_impl,req,on_stage))
+        task=asyncio.create_task(asyncio.to_thread(_ask_impl,req,on_stage,actor))
         while not task.done() or not events.empty():
             if await request.is_disconnected():
                 break

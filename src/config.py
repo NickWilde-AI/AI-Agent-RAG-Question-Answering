@@ -152,6 +152,13 @@ class Settings:
     research_dispatch_workers: int = int(os.getenv("RAG_RESEARCH_DISPATCH_WORKERS", "2"))
     research_dispatch_queue: int = int(os.getenv("RAG_RESEARCH_DISPATCH_QUEUE", "32"))
     research_engine_cache_size: int = int(os.getenv("RAG_RESEARCH_ENGINE_CACHE_SIZE", "16"))
+    # 企业边界默认关闭，开启后 Workspace 必须通过 JWT + ACL 授权。
+    enable_auth: bool = _get_bool("RAG_ENABLE_AUTH", False)
+    jwt_secret: str = os.getenv("RAG_JWT_SECRET", "")
+    jwt_issuer: str = os.getenv("RAG_JWT_ISSUER", "")
+    jwt_audience: str = os.getenv("RAG_JWT_AUDIENCE", "")
+    # 研究任务的 Planner / Executor / Verifier 多角色 LangGraph 编排。
+    enable_research_langgraph: bool = _get_bool("RAG_ENABLE_RESEARCH_LANGGRAPH", False)
     cors_origins: str = os.getenv("RAG_CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
     benchmark_recall_at_10: Optional[float] = _get_optional_float("RAG_BENCHMARK_RECALL_AT_10")
     benchmark_accuracy: Optional[float] = _get_optional_float("RAG_BENCHMARK_ACCURACY")

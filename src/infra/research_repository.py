@@ -12,7 +12,7 @@ from ..research_models import utc_now
 
 
 class ResearchRepository:
-    def create_workspace(self, name: str, description: str, use_demo: bool) -> Dict[str, Any]: raise NotImplementedError
+    def create_workspace(self, name: str, description: str, use_demo: bool, owner_id: str = "") -> Dict[str, Any]: raise NotImplementedError
     def get_workspace(self, workspace_id: str) -> Optional[Dict[str, Any]]: raise NotImplementedError
 
 
@@ -45,18 +45,42 @@ class SQLiteResearchRepository(ResearchRepository):
             CREATE INDEX IF NOT EXISTS idx_conversations_client_updated ON conversations(client_id,updated_at DESC);
             CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);
             CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_created ON conversation_messages(conversation_id,created_at);
+            CREATE TABLE IF NOT EXISTS workspace_acl(workspace_id TEXT NOT NULL,subject TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('viewer','editor','owner')),created_at TEXT NOT NULL,PRIMARY KEY(workspace_id,subject),FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE);
+            CREATE INDEX IF NOT EXISTS idx_workspace_acl_subject ON workspace_acl(subject,workspace_id);
             """)
             c.execute("UPDATE jobs SET status='pending', payload=json_set(payload,'$.status','pending','$.error_message','interrupted by service restart') WHERE status IN ('planning','running','verifying')")
 
-    def create_workspace(self, name: str, description: str, use_demo: bool) -> Dict[str, Any]:
+    def create_workspace(self, name: str, description: str, use_demo: bool, owner_id: str = "") -> Dict[str, Any]:
         import uuid
         now, wid = utc_now(), uuid.uuid4().hex
-        with self._connect() as c: c.execute("INSERT INTO workspaces VALUES(?,?,?,?,?,?)", (wid,name,description,int(use_demo),now,now))
+        with self._connect() as c:
+            c.execute("INSERT INTO workspaces VALUES(?,?,?,?,?,?)", (wid,name,description,int(use_demo),now,now))
+            if owner_id: c.execute("INSERT INTO workspace_acl VALUES(?,?,?,?)",(wid,f"user:{owner_id}","owner",now))
         return self.get_workspace(wid) or {}
 
-    def list_workspaces(self) -> List[Dict[str, Any]]:
-        with self._connect() as c: rows=c.execute("SELECT w.*,COUNT(d.id) document_count FROM workspaces w LEFT JOIN documents d ON d.workspace_id=w.id GROUP BY w.id ORDER BY w.created_at DESC").fetchall()
+    def list_workspaces(self, subjects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        query="SELECT w.*,COUNT(DISTINCT d.id) document_count FROM workspaces w LEFT JOIN documents d ON d.workspace_id=w.id"
+        params: List[Any]=[]
+        if subjects:
+            marks=",".join("?" for _ in subjects); query+=f" JOIN workspace_acl a ON a.workspace_id=w.id AND a.subject IN ({marks})"; params.extend(subjects)
+        query+=" GROUP BY w.id ORDER BY w.created_at DESC"
+        with self._connect() as c: rows=c.execute(query,params).fetchall()
         return [self._workspace(r) for r in rows]
+
+    def grant_workspace_access(self, workspace_id: str, subject: str, role: str) -> None:
+        if role not in {"viewer","editor","owner"} or not subject.startswith(("user:","group:")): raise ValueError("invalid ACL grant")
+        with self._connect() as c: c.execute("INSERT INTO workspace_acl VALUES(?,?,?,?) ON CONFLICT(workspace_id,subject) DO UPDATE SET role=excluded.role",(workspace_id,subject,role,utc_now()))
+
+    def list_workspace_acl(self, workspace_id: str) -> List[Dict[str, str]]:
+        with self._connect() as c: rows=c.execute("SELECT subject,role,created_at FROM workspace_acl WHERE workspace_id=? ORDER BY role,subject",(workspace_id,)).fetchall()
+        return [{"subject":str(r["subject"]),"role":str(r["role"]),"created_at":str(r["created_at"])} for r in rows]
+
+    def workspace_role(self, workspace_id: str, subjects: List[str]) -> Optional[str]:
+        if not subjects: return None
+        marks=",".join("?" for _ in subjects)
+        order="CASE role WHEN 'owner' THEN 3 WHEN 'editor' THEN 2 ELSE 1 END"
+        with self._connect() as c: row=c.execute(f"SELECT role FROM workspace_acl WHERE workspace_id=? AND subject IN ({marks}) ORDER BY {order} DESC LIMIT 1",[workspace_id,*subjects]).fetchone()
+        return str(row[0]) if row else None
 
     def _workspace(self, r: sqlite3.Row) -> Dict[str, Any]:
         return {"workspace_id":r["id"],"name":r["name"],"description":r["description"],"use_demo":bool(r["use_demo"]),"created_at":r["created_at"],"updated_at":r["updated_at"],"document_count":int(r["document_count"]) if "document_count" in r.keys() else len(self.list_documents(r["id"]))}

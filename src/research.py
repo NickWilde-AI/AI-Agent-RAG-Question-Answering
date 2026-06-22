@@ -19,6 +19,7 @@ from .bootstrap import build_engine_from_pages
 from .config import SETTINGS
 from .models import Page
 from .research_models import Evidence, ResearchJob, ResearchReport, ResearchStep, to_dict, utc_now
+from .research_graph import ResearchAgentWorkflow
 
 logger = logging.getLogger(__name__)
 RESEARCH_JOB_DURATION = Histogram("rag_research_job_duration_seconds", "Research job duration")
@@ -185,6 +186,35 @@ class ResearchExecutor:
         try: self.repo.append_event(job_id,event_type,stage,message,progress,detail)
         except Exception: logger.exception("failed to persist research event job=%s type=%s",job_id,event_type)
 
+    def _run_steps(self, job: Dict[str, Any], steps: List[ResearchStep], engine: Any, job_started: float) -> List[Dict[str, Any]]:
+        """Executor Agent：调用现有 ToolRegistry/QAEngine，不另建一条 RAG 链。"""
+        registry=ToolRegistry(engine); job_id=job["job_id"]
+        for i,step in enumerate(steps):
+            if self._timed_out(job_started): raise TimeoutError("research job exceeded total timeout")
+            fresh=self.repo.get_job(job_id)
+            if fresh and fresh["status"]=="cancelled": return job["findings"]
+            step.status="running"; job["current_step"]=step.step_id; job["plan"]=[to_dict(s) for s in steps]
+            if not self.repo.save_job(job): return job["findings"]
+            self._emit(job_id,"step_started","running",f"开始：{step.title}",job["progress"],{"step_id":step.step_id,"tool":step.tool_name,"query":step.query[:300]})
+            try:
+                context="\n".join(str(f.get("answer", "")) for f in job["findings"][-3:])[:2000]
+                step_query=step.query+(f"\n已验证阶段结论（仅供上下文）：{context}" if context else "")
+                run=registry.execute(step.tool_name,{"query":step_query,"topk":5}); result=run["result"]
+                RESEARCH_STEP_DURATION.labels(tool=step.tool_name).observe(run["elapsed_ms"]/1000)
+                step.answer=result.answer; step.verified=bool(result.verified); step.evidence=evidence_from_result(result,engine)
+                step.trace=[{"tool":step.tool_name,"elapsed_ms":run["elapsed_ms"],"hit_count":len(result.hits),"verified":step.verified,"retry_reason":result.trace.retry_reason if result.trace else ""}]
+                step.status="completed" if step.verified else "failed"; RESEARCH_STEPS.labels(tool=step.tool_name,status=step.status).inc()
+                self._emit(job_id,"retrieval_completed","retrieve",f"检索到 {len(result.hits)} 个候选页面",job["progress"],{"step_id":step.step_id,"hit_count":len(result.hits),"documents":result.source_files[:10]})
+                self._emit(job_id,"verification_passed" if step.verified else "verification_failed","verify","证据校验通过" if step.verified else "证据校验未通过",job["progress"],{"step_id":step.step_id,"verified":step.verified,"evidence_count":len(step.evidence)})
+                if step.verified and step.evidence: job["findings"].append({"title":step.title,"answer":step.answer,"verified":True,"evidence":[asdict(e) for e in step.evidence]})
+            except Exception as exc:
+                step.status="failed"; step.error_message=str(exc); RESEARCH_STEPS.labels(tool=step.tool_name,status="failed").inc(); logger.warning("research step failed: %s",exc)
+                self._emit(job_id,"step_failed","running",f"步骤失败：{step.title}",job["progress"],{"step_id":step.step_id,"tool":step.tool_name,"error":str(exc)[:300]})
+            job["progress"]=10+int(70*(i+1)/len(steps)); job["plan"]=[to_dict(s) for s in steps]
+            if not self.repo.save_job(job): return job["findings"]
+            self._emit(job_id,"step_completed","running",f"完成：{step.title}",job["progress"],{"step_id":step.step_id,"status":step.status,"verified":step.verified})
+        return job["findings"]
+
     def execute(self, job_id: str) -> None:
         job_started=time.perf_counter()
         job=self.repo.get_job(job_id)
@@ -196,12 +226,26 @@ class ResearchExecutor:
             RESEARCH_JOBS.labels(status="planning").inc()
             engine=self.build_workspace_engine(job["workspace_id"])
             documents=self.repo.list_documents(job["workspace_id"])
-            steps=ResearchPlanner(getattr(engine.router,"llm_client",None)).plan(job["objective"],documents); job["plan"]=[to_dict(s) for s in steps]; job.update(status="running",progress=10)
+            planner=ResearchPlanner(getattr(engine.router,"llm_client",None))
+            if SETTINGS.enable_research_langgraph:
+                def execute_graph_steps(planned: List[ResearchStep]) -> List[Dict[str, Any]]:
+                    job["plan"]=[to_dict(s) for s in planned]; job.update(status="running",progress=10)
+                    if not self.repo.save_job(job): return job["findings"]
+                    self._emit(job_id,"plan_created","planning",f"已生成 {len(planned)} 个研究步骤",10,{"step_count":len(planned),"tools":[s.tool_name for s in planned],"workflow":"langgraph"})
+                    return self._run_steps(job,planned,engine,job_started)
+                workflow=ResearchAgentWorkflow(planner.plan,execute_graph_steps)
+                graph_state=workflow.run(job["objective"],documents); steps=graph_state["steps"]
+                job["findings"]=graph_state["verified_findings"]; job["role_trace"]=graph_state["role_trace"]
+                # Executor 在图内已完成所有步骤，下方顺序 loop 不再重复执行。
+                graph_executed=True
+            else:
+                steps=planner.plan(job["objective"],documents); graph_executed=False
+            job["plan"]=[to_dict(s) for s in steps]; job.update(status="running",progress=max(10,job.get("progress",0)))
             if not self.repo.save_job(job): return
-            self._emit(job_id,"plan_created","planning",f"已生成 {len(steps)} 个研究步骤",10,{"step_count":len(steps),"tools":[s.tool_name for s in steps]})
+            if not graph_executed: self._emit(job_id,"plan_created","planning",f"已生成 {len(steps)} 个研究步骤",10,{"step_count":len(steps),"tools":[s.tool_name for s in steps]})
             RESEARCH_JOBS.labels(status="running").inc()
             registry=ToolRegistry(engine)
-            for i,step in enumerate(steps):
+            for i,step in enumerate([] if graph_executed else steps):
                 if self._timed_out(job_started): raise TimeoutError("research job exceeded total timeout")
                 fresh=self.repo.get_job(job_id)
                 if fresh and fresh["status"]=="cancelled": return
