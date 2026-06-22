@@ -47,6 +47,18 @@ def test_explicit_page_number_is_a_generic_retrieval_signal():
     assert hits[0].page_id == "d_p13"
 
 
+def test_company_introduction_does_not_force_ppt_prefilter():
+    pages=[Page(page_id="company",doc_id="d",doc_type="report",language="zh",content="中科创达是智能操作系统产品和技术提供商")]
+    retriever=PageRetriever(pages)
+    assert retriever.infer_doc_type("介绍一下中科创达") is None
+    _,hits=retriever.retrieve("介绍一下中科创达",topk=1)
+    assert hits and hits[0].page_id=="company"
+
+
+def test_explicit_ppt_request_keeps_ppt_prefilter():
+    assert PageRetriever.infer_doc_type("请概括这份PPT的内容") == "ppt"
+
+
 def test_visual_rerank_blends_model_rank_without_binding_score_scale():
     from src.models import RetrievalHit
     candidates=[RetrievalHit("coarse_first",9.7),RetrievalHit("visual_first",0.2)]

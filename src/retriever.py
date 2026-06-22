@@ -412,7 +412,9 @@ class PageRetriever:
             return "form"
         if any(x in q for x in ["销售额", "图表", "柱状", "趋势", "报表"]):
             return "report"
-        if any(x in q for x in ["介绍", "试点", "汇报", "ppt", "跨页"]):
+        # “介绍一下某公司/产品”是概览意图，不等于用户指定 PPT。
+        # 只有明确的文档形式词才做硬类型预过滤，避免在混合文档库中把候选页清空。
+        if any(x in q for x in ["ppt", "幻灯片", "演示文稿", "powerpoint"]):
             return "ppt"
         return None
 
