@@ -129,24 +129,29 @@ class QwenVisionInferenceClient:
     def rerank(self,query: str,candidates: List[dict]) -> dict:
         """用千问 API 对小候选集做视觉相关性重排；部署 ColPali 后可由外部适配器替换。"""
         if not self.client: raise RuntimeError("Qwen vision inference is not configured")
-        content=[{"type":"text","text":(
-            "你是多模态检索重排器。判断每个候选页面能否直接支持回答用户问题。"
-            "只返回严格 JSON，不回答问题，不使用外部知识。格式："
-            '{"scores":{"page_id":0.0}}。分数范围 0 到 1；精确术语、数字、图表或架构证据越完整分数越高。\n'
-            f"用户问题：{query}"
-        )}]
-        valid=[]
+        candidate_content=[]; valid=[]
         for index,item in enumerate(candidates,1):
             path=str(item.get("image_path") or "")
             if not path or not Path(path).exists(): continue
             page_id=str(item.get("page_id") or f"candidate_{index}")
             valid.append(page_id)
-            content.append({"type":"text","text":(
+            candidate_content.append({"type":"text","text":(
                 f"候选{index}｜page_id={page_id}｜文件={item.get('source_file','')}｜"
                 f"真实页码={item.get('page_no','未知')}"
             )})
-            content.append({"type":"image_url","image_url":{"url":QwenVisionPageParser._data_url(path)}})
+            candidate_content.append({"type":"image_url","image_url":{"url":QwenVisionPageParser._data_url(path)}})
         if not valid: return {}
+        # 不在格式示例中使用 page_id 占位符；部分 VLM 会把它当成字面键返回。
+        example={page_id:(0.9 if i==0 else 0.1) for i,page_id in enumerate(valid)}
+        prompt=(
+            "你是多模态检索重排器。判断每个候选页面能否直接支持回答用户问题。"
+            "只返回严格 JSON，不回答问题，不使用外部知识。scores 必须且只能使用下列真实 page_id 作为键："
+            f"{json.dumps(valid,ensure_ascii=False)}。输出结构示例："
+            f"{json.dumps({'scores':example},ensure_ascii=False)}。"
+            "分数范围 0 到 1；精确术语、数字、图表或架构证据越完整分数越高。\n"
+            f"用户问题：{query}"
+        )
+        content=[{"type":"text","text":prompt},*candidate_content]
         response=self.client.chat.completions.create(
             model=self.model,messages=[{"role":"user","content":content}],temperature=0
         )
@@ -154,6 +159,9 @@ class QwenVisionInferenceClient:
         match=re.search(r"\{[\s\S]*\}",raw)
         if not match: return {}
         payload=json.loads(match.group(0)); scores=payload.get("scores",payload)
+        if isinstance(scores,list):
+            scores={str(item.get("page_id","")):item.get("score",0) for item in scores if isinstance(item,dict)}
+        if not isinstance(scores,dict): return {}
         return {
             str(page_id):max(0.0,min(1.0,float(score)))
             for page_id,score in scores.items() if str(page_id) in valid

@@ -81,3 +81,21 @@ def test_qwen_auth_failure_stops_following_page_calls(tmp_path,monkeypatch):
     pages=ingest_pdf_with_pymupdf(str(source),"doc",image_output_dir=str(images),dpi=72)
     assert len(calls)==1
     assert [p.metadata["vision_parse_status"] for p in pages] == ["fallback","fallback"]
+
+
+def test_qwen_rerank_uses_real_page_ids_and_accepts_list_scores(tmp_path):
+    from src.infra.qwen_vision_parser import QwenVisionInferenceClient
+    seen={}
+    class Completions:
+        def create(self,**kwargs):
+            seen["prompt"]=kwargs["messages"][0]["content"][0]["text"]
+            message=SimpleNamespace(content='{"scores":[{"page_id":"p1","score":0.9},{"page_id":"p2","score":0.1}]}')
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+    client=QwenVisionInferenceClient.__new__(QwenVisionInferenceClient)
+    client.client=SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    paths=[]
+    for name in ("p1","p2"):
+        path=tmp_path/f"{name}.png"; path.write_bytes(b"synthetic"); paths.append(str(path))
+    scores=client.rerank("ZX-900",[{"page_id":"p1","image_path":paths[0]},{"page_id":"p2","image_path":paths[1]}])
+    assert scores=={"p1":0.9,"p2":0.1}
+    assert '["p1", "p2"]' in seen["prompt"] and '"page_id":0.0' not in seen["prompt"]
