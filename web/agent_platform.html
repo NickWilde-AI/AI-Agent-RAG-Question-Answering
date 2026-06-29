@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>企业级 Agent 中台</title>
+  <style>
+    :root {
+      --bg: #eef3fb;
+      --surface: #ffffff;
+      --surface-2: #f7f9fe;
+      --text: #182230;
+      --muted: #667085;
+      --line: #d9e2f1;
+      --blue: #2563eb;
+      --blue-2: #4f7cff;
+      --green: #12b76a;
+      --orange: #f79009;
+      --red: #f04438;
+      --purple: #7a5af8;
+      --cyan: #06aed4;
+      --dark: #111827;
+      --dark-2: #172033;
+      --shadow: 0 22px 55px rgba(16, 24, 40, .10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(37, 99, 235, .18), transparent 32%),
+        radial-gradient(circle at 78% 4%, rgba(122, 90, 248, .18), transparent 30%),
+        linear-gradient(180deg, rgba(255,255,255,.5), transparent 42%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 270px 1fr;
+    }
+
+    .sidebar {
+      padding: 22px 18px;
+      border-right: 1px solid rgba(255,255,255,.08);
+      background:
+        radial-gradient(circle at 20% 0%, rgba(79,124,255,.35), transparent 28%),
+        linear-gradient(180deg, #101828 0%, #111827 48%, #0b1220 100%);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 26px;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #60a5fa, #8b5cf6);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-weight: 900;
+      box-shadow: 0 12px 26px rgba(37,99,235,.26);
+    }
+
+    .brand h1 { margin: 0; font-size: 17px; color:#fff; }
+    .brand p { margin: 3px 0 0; color: #a8b3c7; font-size: 12px; }
+
+    .nav-title {
+      margin: 18px 0 8px;
+      color: #7d8aa3;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 11px;
+      border-radius: 12px;
+      color: #b7c2d8;
+      font-size: 13px;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+    }
+
+    .nav-item.active,
+    .nav-item:hover {
+      color: #fff;
+      background: rgba(255,255,255,.1);
+      border-color: rgba(255,255,255,.16);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    }
+
+    .main {
+      min-width: 0;
+      padding: 24px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border: 1px solid rgba(217,226,241,.78);
+      border-radius: 22px;
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 12px 30px rgba(16,24,40,.055);
+      backdrop-filter: blur(14px);
+    }
+
+    .page-title h2 { margin: 0; font-size: 22px; letter-spacing:-.03em; }
+    .page-title p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+
+    .top-meta { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.76);
+      color: #344054;
+      border-radius: 12px;
+      padding: 10px 13px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: default;
+    }
+    .btn.primary {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(135deg, #6675ff, var(--blue));
+      box-shadow: 0 12px 24px rgba(37,99,235,.22);
+    }
+
+    .hero {
+      border: 1px solid rgba(201,216,255,.86);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 86% 0%, rgba(79,124,255,.32), transparent 28%),
+        radial-gradient(circle at 52% 100%, rgba(6,174,212,.16), transparent 32%),
+        linear-gradient(135deg, rgba(255,255,255,.96), rgba(247,250,255,.9));
+      box-shadow: var(--shadow);
+      padding: 28px;
+      display: grid;
+      grid-template-columns: 1.35fr .65fr;
+      gap: 18px;
+      margin-bottom: 16px;
+    }
+
+    .hero h3 { margin: 0 0 10px; font-size: 32px; letter-spacing:-.04em; }
+    .hero p { margin: 0; color: #52627a; line-height: 1.75; }
+
+    .tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .tag {
+      border: 1px solid rgba(214,225,245,.9);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,.78);
+      color: #365279;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-card {
+      border: 1px solid #dce6f8;
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255,255,255,.72);
+    }
+    .status-card h4 { margin: 0 0 12px; }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #edf2fb;
+      font-size: 13px;
+    }
+    .status-row:last-child { border-bottom: none; }
+    .status-row span { color: var(--muted); }
+    .status-row b { color: #173b7a; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.86);
+      padding: 16px;
+      box-shadow: 0 10px 28px rgba(16,24,40,.04);
+      position: relative;
+      overflow: hidden;
+    }
+    .metric::after {
+      content:"";
+      position:absolute;
+      right:-18px;
+      top:-18px;
+      width:70px;
+      height:70px;
+      border-radius:999px;
+      background:rgba(37,99,235,.08);
+    }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .metric b { display: block; margin-top: 8px; font-size: 25px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.9);
+      padding: 16px;
+      box-shadow: 0 10px 28px rgba(16,24,40,.045);
+    }
+    .card.soft-blue { background: linear-gradient(135deg, #ffffff, #f5f8ff); }
+    .card.soft-purple { background: linear-gradient(135deg, #ffffff, #f8f5ff); }
+
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .section-head h3 { margin: 0; font-size: 16px; }
+    .section-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      background: #eef4ff;
+      color: #2254b8;
+      white-space: nowrap;
+    }
+    .pill.ok { background: #ecfdf3; color: #067647; }
+    .pill.plan { background: #fff7ed; color: #b54708; }
+    .pill.danger { background: #fef3f2; color: #b42318; }
+
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .agent {
+      border: 1px solid #e1e8f5;
+      border-radius: 18px;
+      padding: 14px;
+      background: linear-gradient(180deg, #fff, #fbfdff);
+      min-height: 170px;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .agent::after {
+      content:"";
+      position:absolute;
+      width:82px;
+      height:82px;
+      right:-32px;
+      top:-32px;
+      border-radius:999px;
+      background:rgba(37,99,235,.06);
+    }
+    .agent:hover {
+      transform: translateY(-2px);
+      border-color:#bcd0ff;
+      box-shadow: 0 18px 36px rgba(37,99,235,.08);
+    }
+    .agent-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .agent-icon { font-size: 24px; }
+    .agent h4 { margin: 10px 0 6px; }
+    .agent p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .agent-action {
+      margin-top: 12px;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .chip {
+      border-radius: 999px;
+      border: 1px solid #e1e8f5;
+      color: #475467;
+      background: #f8fafc;
+      padding: 4px 7px;
+      font-size: 11px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .node {
+      border: 1px solid #dbe6f8;
+      border-radius: 16px;
+      padding: 12px;
+      min-height: 110px;
+      background: #fbfdff;
+    }
+    .node b { display: block; margin-bottom: 7px; color: #1b3b6f; }
+    .node span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid #edf2fb;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: #58677f; background: #fafcff; font-weight: 800; }
+    td { color: #344054; }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .step {
+      border: 1px solid #dbe6f8;
+      border-radius: 16px;
+      background: #fbfdff;
+      padding: 12px;
+      min-height: 140px;
+    }
+    .step b { display: block; color: #1b3b6f; margin-bottom: 8px; }
+    .step span { color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .note {
+      border-left: 4px solid var(--blue);
+      background: #f5f8ff;
+      color: #43536f;
+      padding: 12px 14px;
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .embodied-grid {
+      display:grid;
+      grid-template-columns: repeat(4,minmax(0,1fr));
+      gap:10px;
+    }
+    .embodied-card {
+      border:1px solid #dbe6f8;
+      border-radius:18px;
+      background:linear-gradient(180deg,#fff,#fbfdff);
+      padding:14px;
+      min-height:150px;
+    }
+    .embodied-card h4 { margin:8px 0 6px; }
+    .embodied-card p { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
+    .mini-icon {
+      width:34px;
+      height:34px;
+      display:grid;
+      place-items:center;
+      border-radius:12px;
+      background:#eef4ff;
+      color:#1d4ed8;
+      font-size:18px;
+    }
+    .focus-banner {
+      display:grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap:14px;
+      margin-bottom:16px;
+    }
+    .focus-panel {
+      border:1px solid rgba(188,208,255,.8);
+      border-radius:22px;
+      background:linear-gradient(135deg,rgba(255,255,255,.9),rgba(245,248,255,.92));
+      padding:16px;
+      box-shadow:0 12px 30px rgba(37,99,235,.06);
+    }
+    .focus-panel h3 { margin:0 0 8px; font-size:16px; }
+    .focus-panel p { margin:0; color:var(--muted); font-size:13px; line-height:1.7; }
+    .focus-list {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+      margin-top:12px;
+    }
+    .focus-item {
+      border:1px solid #e1e8f5;
+      border-radius:14px;
+      padding:10px;
+      background:#fff;
+      font-size:12px;
+      color:#40506a;
+    }
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15,23,42,.42);
+      backdrop-filter: blur(8px);
+      z-index: 30;
+    }
+    .modal-mask.show { display:flex; }
+    .modal {
+      width: min(720px, 100%);
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 30px 80px rgba(15,23,42,.25);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.6);
+    }
+    .modal-head {
+      padding: 18px 20px;
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      background: linear-gradient(135deg,#f8fbff,#eef4ff);
+      border-bottom:1px solid #e1e8f5;
+    }
+    .modal-head h3 { margin:0; font-size:20px; }
+    .modal-head p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+    .modal-close {
+      border:0;
+      width:34px;
+      height:34px;
+      border-radius:12px;
+      background:#fff;
+      color:#475467;
+      font-size:18px;
+      cursor:pointer;
+    }
+    .modal-body { padding:18px 20px 20px; }
+    .demo-box {
+      border:1px solid #dbe6f8;
+      border-radius:18px;
+      background:#fbfdff;
+      padding:14px;
+      color:#344054;
+      line-height:1.75;
+      font-size:13px;
+    }
+    .demo-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .demo-btn {
+      border:1px solid #d7e3f7;
+      background:#fff;
+      color:#1d4ed8;
+      border-radius:999px;
+      padding:8px 11px;
+      font-weight:800;
+      font-size:12px;
+    }
+
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { position: relative; height: auto; }
+      .hero { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .span-4,.span-5,.span-6,.span-7,.span-8,.span-12 { grid-column: span 12; }
+      .agent-grid,.flow,.roadmap,.embodied-grid { grid-template-columns: 1fr; }
+      .focus-banner,.focus-list { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">A</div>
+        <div>
+          <h1>Agent 中台</h1>
+          <p>Enterprise Agent Platform</p>
+        </div>
+      </div>
+
+      <div class="nav-title">工作台</div>
+      <div class="nav-item active">🏠 总览大屏</div>
+      <div class="nav-item">🤖 Agent 市场</div>
+      <div class="nav-item">🧩 Skill Registry</div>
+      <div class="nav-item">🔌 MCP Gateway</div>
+      <div class="nav-item">🧠 Memory / Wiki</div>
+
+      <div class="nav-title">能力中心</div>
+      <div class="nav-item">📚 企业知识库 Agent</div>
+      <div class="nav-item">🧾 报销发票 Agent</div>
+      <div class="nav-item">📑 合同审核 Agent</div>
+      <div class="nav-item">📊 数据分析 Agent</div>
+      <div class="nav-item">🤖 人形机器人 Agent</div>
+      <div class="nav-item">🚗 车载设备 Agent</div>
+
+      <div class="nav-title">治理</div>
+      <div class="nav-item">🛡️ 权限与安全</div>
+      <div class="nav-item">📈 监控与评测</div>
+      <div class="nav-item">⚙️ 模型路由</div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="page-title">
+          <h2>企业级 Agent 中台</h2>
+          <p>主攻方向：具身智能 / 人形机器人 / 车载设备 / 企业 Agent Runtime</p>
+        </div>
+        <div class="top-meta">
+          <span class="pill ok">RAG 已可用</span>
+          <span class="pill">Agent 中台原型</span>
+          <span class="pill danger">50W+ Offer 专项</span>
+        </div>
+      </div>
+
+      <section class="hero">
+        <div>
+          <h3>从“文档问答”升级为“企业智能执行平台”</h3>
+          <p>
+            当前项目的 RAG 检索会作为 <b>Knowledge Agent / Knowledge Skill</b> 接入这里。
+            中台本身负责 Agent 创建、Skill 编排、MCP 工具治理、Memory、模型路由、安全门控、执行轨迹和评测。
+            求职方向不做泛泛的 Demo，而是专项对齐具身智能公司：人形机器人任务大脑、车载设备 Agent、VLM 感知、动作安全门控和可审计执行闭环。
+          </p>
+          <div class="tag-row">
+            <span class="tag">Agentic Engineering</span>
+            <span class="tag">Agent Runtime</span>
+            <span class="tag">Skill + MCP</span>
+            <span class="tag">Memory / LLM Wiki</span>
+            <span class="tag">VLM / Multimodal</span>
+            <span class="tag">Safety Gate</span>
+            <span class="tag">Private vLLM</span>
+          </div>
+        </div>
+        <div class="status-card">
+          <h4>当前实现边界</h4>
+          <div class="status-row"><span>真实可用</span><b>多模态 RAG</b></div>
+          <div class="status-row"><span>前端展示</span><b>Agent 中台</b></div>
+          <div class="status-row"><span>后续接入</span><b>Skill Registry</b></div>
+          <div class="status-row"><span>具身扩展</span><b>Humanoid Mock</b></div>
+          <div class="status-row"><span>设备扩展</span><b>Vehicle Agent</b></div>
+          <div class="status-row"><span>生产部署</span><b>vLLM / Milvus</b></div>
+        </div>
+      </section>
+
+      <section class="focus-banner">
+        <div class="focus-panel">
+          <h3>专项定位：不是“什么都做”，而是为具身智能 AI Agent 岗位服务</h3>
+          <p>
+            页面上的每个模块都围绕一个目标：证明这个项目不是普通 RAG，而是可以扩展成机器人/车载/设备侧 Agent 大脑的中台。
+            现在先做产品壳和架构表达，后续逐步把真实 RAG、MCP、Memory、VLM、动作模拟器接进去。
+          </p>
+        </div>
+        <div class="focus-panel">
+          <h3>Offer 能力映射</h3>
+          <div class="focus-list">
+            <div class="focus-item">Agent Runtime：任务规划、路由、执行、校验</div>
+            <div class="focus-item">Embodied AI：感知、世界状态、动作、安全</div>
+            <div class="focus-item">MCP / Skill：企业系统与设备工具接入</div>
+            <div class="focus-item">Production：权限、评测、可观测、降级</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics">
+        <div class="metric"><span>Agent 模板</span><b>16</b></div>
+        <div class="metric"><span>规划 Skill</span><b>36</b></div>
+        <div class="metric"><span>模型 Provider</span><b>5</b></div>
+        <div class="metric"><span>MCP 扩展</span><b>∞</b></div>
+      </section>
+
+      <section class="grid">
+        <div class="card span-12">
+          <div class="section-head">
+            <div>
+              <h3>Agent 市场 / 企业数字员工</h3>
+              <p>这里是企业用户真正看到的产品入口；每个 Agent 背后绑定一组 Skill、工具、知识库和权限策略。</p>
+            </div>
+            <span class="pill">Marketplace</span>
+          </div>
+          <div class="agent-grid">
+            <div class="agent" data-title="企业知识库 Agent" data-desc="当前唯一真实接入的核心能力。后续会把现有多模态 RAG 封装成 Knowledge Skill，支持文档问答、页图证据、跨页检索、评测与轨迹回放。" data-flow="上传文档 → 建库 → 检索候选页 → VLM/LLM 生成 → Verifier 校验 → 输出证据。">
+              <div class="agent-top"><span class="agent-icon">📚</span><span class="pill ok">已接入</span></div>
+              <h4>企业知识库 Agent</h4>
+              <p>接入现有 RAG：文档问答、图表理解、跨页证据、研究报告。</p>
+              <div class="chips"><span class="chip">Agentic RAG</span><span class="chip">VLM</span><span class="chip">Evidence</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="报销发票 Agent" data-desc="企业中台的典型业务 Agent，用来展示 Skill 编排能力。真实实现时接入 OCR、财务制度知识库、审批系统 MCP 和人工确认。" data-flow="上传发票 → OCR 抽取 → 制度校验 → 异常提示 → 生成报销草稿 → 等待人工确认。">
+              <div class="agent-top"><span class="agent-icon">🧾</span><span class="pill plan">规划</span></div>
+              <h4>报销发票 Agent</h4>
+              <p>识别发票，校验金额、日期和抬头，查询报销制度，生成审批单。</p>
+              <div class="chips"><span class="chip">OCR</span><span class="chip">Policy RAG</span><span class="chip">审批 MCP</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="合同审核 Agent" data-desc="展示企业级 Agent 的风控能力：不是直接替人签合同，而是抽取风险点、给出证据、要求人工确认。" data-flow="解析合同 → 抽取关键条款 → 对照模板/法务规则 → 风险分级 → 输出审核意见。">
+              <div class="agent-top"><span class="agent-icon">📑</span><span class="pill plan">规划</span></div>
+              <h4>合同审核 Agent</h4>
+              <p>抽取主体、金额、期限、违约条款，输出风险清单和证据引用。</p>
+              <div class="chips"><span class="chip">Doc AI</span><span class="chip">Risk</span><span class="chip">Verifier</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="数据分析 Agent" data-desc="用于体现模型调用企业数据的能力。重点不是炫技，而是展示 Text2SQL、图表解释、权限边界和审计。" data-flow="理解问题 → 选择数据源 → 生成 SQL → 查询 → 图表解释 → 生成经营分析。">
+              <div class="agent-top"><span class="agent-icon">📊</span><span class="pill plan">规划</span></div>
+              <h4>数据分析 Agent</h4>
+              <p>连接 Excel / MySQL，生成 SQL、图表、异常解释和经营分析报告。</p>
+              <div class="chips"><span class="chip">Text2SQL</span><span class="chip">Chart QA</span><span class="chip">Report</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="研发提效 Agent" data-desc="用来承接你的后端工程背景：代码问答、日志排查、发布复盘、测试生成，面试时能自然讲到工程化。" data-flow="读取代码/日志 → 定位异常 → 生成修复建议 → 生成测试用例 → 输出复盘报告。">
+              <div class="agent-top"><span class="agent-icon">🧑‍💻</span><span class="pill plan">规划</span></div>
+              <h4>研发提效 Agent</h4>
+              <p>代码问答、日志分析、Bug 排查、测试用例生成和发布复盘。</p>
+              <div class="chips"><span class="chip">Code RAG</span><span class="chip">Log Tool</span><span class="chip">Test Gen</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="人形机器人 Agent" data-desc="这是本页面的核心专项：面向人形机器人的任务大脑。现在是 Mock，未来接入 VLM、World State、机器人控制 MCP、动作后验证。" data-flow="用户任务 → 场景感知 → 任务拆解 → 动作候选 → Safety Gate → 执行动作 → 状态回读校验。">
+              <div class="agent-top"><span class="agent-icon">🤖</span><span class="pill danger">Mock</span></div>
+              <h4>人形机器人 Agent</h4>
+              <p>面向人形机器人：场景理解、任务规划、动作安全门控、动作后校验。</p>
+              <div class="chips"><span class="chip">World State</span><span class="chip">Action Skill</span><span class="chip">Safety Gate</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="车载设备 Agent" data-desc="保留车载方向，但不再作为唯一主线。它用于展示设备 Agent：语音入口、车控 Skill、VLM 看图、Memory、动作风险分级。" data-flow="语音/文本 → Intent → 车控 Skill → 风险判断 → MCP 调用 → 车辆状态回读。">
+              <div class="agent-top"><span class="agent-icon">🚗</span><span class="pill plan">规划</span></div>
+              <h4>车载设备 Agent</h4>
+              <p>面向智能座舱/车控：语音意图、车控工具、VLM 状态理解、动作确认。</p>
+              <div class="chips"><span class="chip">Vehicle MCP</span><span class="chip">Voice</span><span class="chip">Action Verify</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="机器人记忆 Agent" data-desc="给具身智能加上 Memory：记住用户偏好、任务上下文、环境变化和历史失败原因，让机器人不是一次性问答。" data-flow="任务开始 → 读取用户/场景记忆 → 执行 → 写入结果/失败原因 → 下次任务复用。">
+              <div class="agent-top"><span class="agent-icon">🧠</span><span class="pill plan">规划</span></div>
+              <h4>机器人记忆 Agent</h4>
+              <p>维护用户偏好、场景状态、历史任务、失败复盘，让动作决策可持续优化。</p>
+              <div class="chips"><span class="chip">Memory</span><span class="chip">World Model</span><span class="chip">Replay</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+            <div class="agent" data-title="VLM 场景理解 Agent" data-desc="面向人形机器人和车载设备的视觉理解入口。当前可以先用千问 API 模拟，未来切换到自部署 VLM 或端云协同模型。" data-flow="图片/视频帧 → VLM 识别 → 结构化 Observation → 风险判断 → 交给 Planner。">
+              <div class="agent-top"><span class="agent-icon">👁️</span><span class="pill plan">规划</span></div>
+              <h4>VLM 场景理解 Agent</h4>
+              <p>把图像、视频帧、设备状态转成结构化 Observation，供机器人 Planner 使用。</p>
+              <div class="chips"><span class="chip">VLM</span><span class="chip">Observation</span><span class="chip">Scene Graph</span></div>
+              <div class="agent-action">点击查看模拟运行 →</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card span-12">
+          <div class="section-head">
+            <div>
+              <h3>Agent Runtime 执行链路</h3>
+              <p>中台的核心不是堆功能，而是把模型能力变成可靠、可控、可审计的执行系统。</p>
+            </div>
+            <span class="pill">Harness</span>
+          </div>
+          <div class="flow">
+            <div class="node"><b>1. Intent</b><span>识别用户任务：问答、审批、分析、控制、研究。</span></div>
+            <div class="node"><b>2. Plan</b><span>Plan-and-Execute / LangGraph 拆解任务步骤。</span></div>
+            <div class="node"><b>3. Route</b><span>选择 Agent、Skill、MCP 工具和模型 Provider。</span></div>
+            <div class="node"><b>4. Execute</b><span>调用 RAG、VLM、数据库、审批、设备控制。</span></div>
+            <div class="node"><b>5. Verify</b><span>证据校验、动作校验、失败重试和降级。</span></div>
+            <div class="node"><b>6. Trace</b><span>SSE 轨迹、审计、评测、成本和复盘。</span></div>
+          </div>
+        </div>
+
+        <div class="card span-7">
+          <div class="section-head">
+            <div><h3>Skill / MCP / Memory 中台能力</h3><p>这些是未来真正要实现的后端模块。</p></div>
+          </div>
+          <table>
+            <tr><th>模块</th><th>职责</th><th>状态</th></tr>
+            <tr><td>Skill Registry</td><td>管理 Skill schema、权限、超时、fallback、风险等级。</td><td><span class="pill plan">规划</span></td></tr>
+            <tr><td>MCP Gateway</td><td>统一接入企业系统，做工具发现、参数校验、审计。</td><td><span class="pill ok">已有基础</span></td></tr>
+            <tr><td>Memory System</td><td>Working / Short-term / Long-term / User Profile / World State。</td><td><span class="pill plan">规划</span></td></tr>
+            <tr><td>Enterprise Wiki</td><td>参考 Karpathy LLM Wiki，把知识沉淀为实体页、概念页、FAQ。</td><td><span class="pill plan">规划</span></td></tr>
+            <tr><td>Model Router</td><td>Qwen、DeepSeek、GLM、GPT、本地 vLLM、端侧 SLM。</td><td><span class="pill plan">规划</span></td></tr>
+          </table>
+        </div>
+
+        <div class="card span-5 soft-purple">
+          <div class="section-head">
+            <div><h3>具身智能扩展</h3><p>主线聚焦人形机器人，同时保留车载设备作为设备 Agent 场景。</p></div>
+          </div>
+          <table>
+            <tr><th>环节</th><th>设计</th></tr>
+            <tr><td>Perception</td><td>摄像头、传感器、VLM 输出 → Observation。</td></tr>
+            <tr><td>World State</td><td>记录机器人姿态、手臂/底盘状态、周围物体、用户意图、环境约束。</td></tr>
+            <tr><td>Action Skill</td><td>移动、转向、抓取、递送、拍照、播报、车控等动作全部 schema 化。</td></tr>
+            <tr><td>Safety Gate</td><td>查询/低风险/确认/拒绝四级策略。</td></tr>
+            <tr><td>Action Verifier</td><td>动作后读取状态确认执行结果。</td></tr>
+          </table>
+        </div>
+
+        <div class="card span-12 soft-blue">
+          <div class="section-head">
+            <div>
+              <h3>具身智能扩展包</h3>
+              <p>未来如果投人形机器人/具身智能/智能硬件岗位，这一层就是项目的差异化展示。</p>
+            </div>
+            <span class="pill danger">Embodied AI</span>
+          </div>
+          <div class="embodied-grid">
+            <div class="embodied-card">
+              <div class="mini-icon">👁️</div>
+              <h4>Perception Adapter</h4>
+              <p>统一摄像头、深度图、传感器、VLM、IoT 状态，输出标准 Observation。</p>
+            </div>
+            <div class="embodied-card">
+              <div class="mini-icon">🧭</div>
+              <h4>World State</h4>
+              <p>维护位置、速度、负载、设备状态、环境风险和任务上下文。</p>
+            </div>
+            <div class="embodied-card">
+              <div class="mini-icon">🦾</div>
+              <h4>Action Skill</h4>
+              <p>把移动、转向、抓取、递送、拍照、播报、车控封装成可治理 Skill。</p>
+            </div>
+            <div class="embodied-card">
+              <div class="mini-icon">🛡️</div>
+              <h4>Safety Gate</h4>
+              <p>高风险动作必须确认或拒绝；所有动作保留 dry-run 和审计记录。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card span-12">
+          <div class="section-head">
+            <div><h3>生产级工程能力</h3><p>面试和落地都要讲清楚：稳定性、权限、成本、可观测、评测。</p></div>
+            <span class="pill">Production</span>
+          </div>
+          <div class="grid">
+            <div class="card span-4"><h4>模型与部署</h4><p class="note">OpenAI-compatible 开发适配；生产切换 vLLM、私有模型、Milvus/Qdrant、Redis、Docker/K8s。</p></div>
+            <div class="card span-4"><h4>安全治理</h4><p class="note">JWT、RBAC/ACL、工具权限、Prompt Injection 防护、动作风险分级、审计日志。</p></div>
+            <div class="card span-4"><h4>可观测评测</h4><p class="note">SSE Trace、Prometheus/Grafana、OpenTelemetry、Golden Dataset、Trajectory Evaluation、压测。</p></div>
+          </div>
+        </div>
+
+        <div class="card span-12">
+          <div class="section-head">
+            <div><h3>实施路线</h3><p>先有一个完整中台壳，再把现有 RAG 作为第一个真实 Agent 接进去。</p></div>
+          </div>
+          <div class="roadmap">
+            <div class="step"><b>M1 页面原型</b><span>完成当前企业级中台页面，展示所有核心模块。</span></div>
+            <div class="step"><b>M2 接入 RAG</b><span>把现有 RAG 检索封装为 Knowledge Agent / Skill。</span></div>
+            <div class="step"><b>M3 Skill Registry</b><span>定义 Skill schema、权限、超时、fallback、风险等级。</span></div>
+            <div class="step"><b>M4 MCP Gateway</b><span>统一接入数据库、审批、车载设备和机器人 mock。</span></div>
+            <div class="step"><b>M5 Memory / Wiki</b><span>加入长期记忆和企业知识 Wiki 层。</span></div>
+            <div class="step"><b>M6 具身 Mock</b><span>Humanoid Mock 跑通感知-规划-动作-反馈。</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-mask" id="agentModal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <div>
+          <h3 id="modalTitle">Agent 模拟运行</h3>
+          <p id="modalDesc">这里展示模拟效果，后续再接入真实后端。</p>
+        </div>
+        <button class="modal-close" id="modalClose" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="demo-box" id="modalFlow"></div>
+        <div class="demo-actions">
+          <button class="demo-btn">模拟创建任务</button>
+          <button class="demo-btn">查看执行轨迹</button>
+          <button class="demo-btn">绑定 Skill</button>
+          <button class="demo-btn">配置权限策略</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const modal = document.getElementById("agentModal");
+    const modalTitle = document.getElementById("modalTitle");
+    const modalDesc = document.getElementById("modalDesc");
+    const modalFlow = document.getElementById("modalFlow");
+    const closeBtn = document.getElementById("modalClose");
+
+    document.querySelectorAll(".agent").forEach((card) => {
+      card.addEventListener("click", () => {
+        const title = card.dataset.title || card.querySelector("h4")?.textContent || "Agent";
+        const desc = card.dataset.desc || "该 Agent 暂未接入真实后端，当前为产品原型模拟。";
+        const flow = card.dataset.flow || "用户输入 → Agent 规划 → Skill 调用 → Verifier 校验 → 输出结果。";
+        modalTitle.textContent = title;
+        modalDesc.textContent = desc;
+        modalFlow.innerHTML = `<b>模拟执行链路：</b><br>${flow}<br><br><b>当前状态：</b>前端原型已完成，真实能力会通过 RAG / MCP / Memory / VLM / Robot Mock 分阶段接入。`;
+        modal.classList.add("show");
+        modal.setAttribute("aria-hidden", "false");
+      });
+    });
+
+    function closeModal() {
+      modal.classList.remove("show");
+      modal.setAttribute("aria-hidden", "true");
+    }
+    closeBtn.addEventListener("click", closeModal);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closeModal();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeModal();
+    });
+  </script>
+</body>
+</html>
