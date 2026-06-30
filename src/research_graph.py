@@ -4,7 +4,43 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, TypedDict
 
-from langgraph.graph import END, START, StateGraph
+try:
+    from langgraph.graph import END, START, StateGraph
+except Exception:  # pragma: no cover - 本地依赖不兼容时使用轻量顺序图兜底
+    END = "__end__"
+    START = "__start__"
+
+    class _CompiledGraph:
+        def __init__(self, order: List[str], handlers: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]) -> None:
+            self._order = order
+            self._handlers = handlers
+
+        def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
+            current = dict(state)
+            for name in self._order:
+                update = self._handlers[name](current)
+                if update:
+                    current.update(update)
+            return current
+
+    class StateGraph:  # type: ignore[override]
+        def __init__(self, *_args, **_kwargs) -> None:
+            self._nodes: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {}
+            self._edges: Dict[str, str] = {}
+
+        def add_node(self, name: str, handler: Callable[[Dict[str, Any]], Dict[str, Any]]) -> None:
+            self._nodes[name] = handler
+
+        def add_edge(self, left: str, right: str) -> None:
+            self._edges[left] = right
+
+        def compile(self) -> _CompiledGraph:
+            order: List[str] = []
+            cursor = self._edges.get(START)
+            while cursor and cursor != END:
+                order.append(cursor)
+                cursor = self._edges.get(cursor)
+            return _CompiledGraph(order, self._nodes)
 
 
 class ResearchGraphState(TypedDict, total=False):

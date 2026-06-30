@@ -10,7 +10,10 @@ openpyxl
 python-docx
 python-pptx
 pymupdf
-langgraph
+# langgraph 0.2.x 与 langchain-core 0.2.x 配套；升到 1.x 需同步升级 langchain-core>=1.4，否则
+# langgraph-checkpoint 会调用新版 Reviver(allowed_objects=...) 触发 TypeError 导致导入失败。
+langgraph>=0.2.74,<0.3
+langchain-core>=0.2.40,<0.3
 mcp>=1.2,<2; python_version >= "3.10"
 sentry-sdk
 kafka-python

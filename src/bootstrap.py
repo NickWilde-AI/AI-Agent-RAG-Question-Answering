@@ -31,7 +31,6 @@ from typing import Any, List, Optional
 from .agent_loop import PlanExecuteAgentLoop
 from .config import SETTINGS
 from .infra.redis_memory import RedisSessionMemory
-from .langgraph_engine import LangGraphQAEngine
 from .llm_client import LLMClient
 from .memory import SessionMemory
 from .models import Page
@@ -62,7 +61,12 @@ def _assemble_engine(retriever: PageRetriever, llm_client: LLMClient) -> Any:
 
     router = RouterAgent(llm_client=llm_client)
     verifier = Verifier(llm_client=llm_client)
-    engine_cls = LangGraphQAEngine if SETTINGS.enable_langgraph else QAEngine
+    if SETTINGS.enable_langgraph:
+        from .langgraph_engine import LangGraphQAEngine
+
+        engine_cls = LangGraphQAEngine
+    else:
+        engine_cls = QAEngine
     return engine_cls(retriever=retriever, router=router, memory=memory, verifier=verifier)
 
 

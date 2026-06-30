@@ -44,6 +44,7 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 import sentry_sdk
 
 from .agent_loop import PlanExecuteAgentLoop
+from .agent_center import AgentCenterRuntime, AgentCenterRunRequest, SkillResult, SkillSpec
 from .bootstrap import build_engine
 from .config import SETTINGS
 from .middleware_ops import RateLimitMiddleware, RequestTimingMiddleware
@@ -99,6 +100,7 @@ agent_loop = PlanExecuteAgentLoop(engine=engine, max_loops=2)
 research_repository = SQLiteResearchRepository(os.getenv("RAG_RESEARCH_DB", "data/research/research.db"))
 research_executor = ResearchExecutor(research_repository)
 research_dispatcher = InProcessJobDispatcher(research_executor)
+agent_center_runtime = AgentCenterRuntime(lambda: engine, lambda: research_executor)
 
 
 def _current_actor(authorization: Optional[str] = Header(default=None)) -> Actor:
@@ -220,6 +222,12 @@ def chat_page() -> FileResponse:
     return FileResponse("web/chat.html")
 
 
+@app.get("/agent-platform")
+def agent_platform_page() -> FileResponse:
+    """企业 AI Agent 中台页面。"""
+    return FileResponse("web/agent_platform.html")
+
+
 @app.get("/capabilities")
 def capabilities() -> Dict[str, Any]:
     """企业级能力接入状态。"""
@@ -267,6 +275,8 @@ def capabilities() -> Dict[str, Any]:
         "deep_research_plan_execute": True,
         "agentic_query_expansion": SETTINGS.enable_query_expansion,
         "agentic_retry_refine": SETTINGS.enable_agentic_retry_refine,
+        "agent_center": True,
+        "agent_center_skills": [skill.name for skill in agent_center_runtime.list_skills()],
         "benchmark": {
             "recall_at_10": SETTINGS.benchmark_recall_at_10,
             "accuracy": SETTINGS.benchmark_accuracy,
@@ -565,6 +575,26 @@ def eval_last() -> Dict[str, Any]:
     if not payload:
         return {"exists": False, "message": "no eval report found"}
     return {"exists": True, **payload}
+
+
+@app.get("/agent-center/skills", response_model=List[SkillSpec])
+def list_agent_center_skills() -> List[SkillSpec]:
+    return agent_center_runtime.list_skills()
+
+
+@app.get("/agent-center/skills/{skill_name}", response_model=SkillSpec)
+def get_agent_center_skill(skill_name: str) -> SkillSpec:
+    skill = agent_center_runtime.get_skill(skill_name)
+    if skill is None:
+        raise _not_found("skill")
+    return skill
+
+
+@app.post("/agent-center/run", response_model=SkillResult)
+def run_agent_center_skill(req: AgentCenterRunRequest, actor: Actor = Depends(_current_actor)) -> SkillResult:
+    if req.workspace_id:
+        _require_workspace(req.workspace_id, actor)
+    return agent_center_runtime.run(req)
 
 
 def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None,actor: Actor = ANONYMOUS_ACTOR) -> AskResponse:

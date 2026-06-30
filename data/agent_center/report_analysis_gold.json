@@ -1,0 +1,48 @@
+{
+  "description": "report_analysis Skill 数值计算 gold set。每条样本直接断言 _calculation_from_query 在给定指标数据上的输出，与检索链路解耦，保证可重复。",
+  "data_note": "样本规模有限，仅覆盖核心计算类型(占比/差值/极值/求和/查值)；生产前需在更大规模真实报表上扩充。",
+  "samples": [
+    {
+      "id": "pct_overseas",
+      "query": "海外员工占比是多少？",
+      "metrics": {"海外员工": 35, "国内员工": 65},
+      "expected_type": "percentage",
+      "expected_result": 35.0
+    },
+    {
+      "id": "diff_oem_supplier",
+      "query": "主机厂数量比一级供应商多多少？",
+      "metrics": {"主机厂": 120, "一级供应商": 80},
+      "expected_type": "difference",
+      "expected_result": 40.0
+    },
+    {
+      "id": "max_product_line",
+      "query": "哪个产品线销售额最高？",
+      "metrics": {"产品线A": 120, "产品线B": 180, "产品线C": 95},
+      "expected_type": "max",
+      "expected_result": 180.0
+    },
+    {
+      "id": "min_product_line",
+      "query": "哪个产品线销售额最低？",
+      "metrics": {"产品线A": 120, "产品线B": 180, "产品线C": 95},
+      "expected_type": "min",
+      "expected_result": 95.0
+    },
+    {
+      "id": "sum_total",
+      "query": "三条产品线销售额一共是多少？",
+      "metrics": {"产品线A": 120, "产品线B": 180, "产品线C": 95},
+      "expected_type": "sum",
+      "expected_result": 395.0
+    },
+    {
+      "id": "lookup_single",
+      "query": "产品线B的销售额是多少？",
+      "metrics": {"产品线A": 120, "产品线B": 180, "产品线C": 95},
+      "expected_type": "lookup",
+      "expected_result": 180.0
+    }
+  ]
+}

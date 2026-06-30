@@ -11,7 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, TypedDict
 
-from langgraph.graph import END, START, StateGraph
+try:
+    from langgraph.graph import END, START, StateGraph
+except Exception:  # pragma: no cover - 仅在本地 langgraph 依赖不兼容时兜底
+    END = "__end__"
+    START = "__start__"
+
+    class StateGraph:  # type: ignore[override]
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("langgraph is unavailable in the current environment")
 
 from .config import SETTINGS
 from .memory import SessionMemory

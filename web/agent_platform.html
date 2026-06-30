@@ -3,848 +3,1342 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>企业级 Agent 中台</title>
+  <title>企业级 AI Agent 中台</title>
   <style>
     :root {
-      --bg: #eef3fb;
+      --bg: #f6f7f9;
       --surface: #ffffff;
-      --surface-2: #f7f9fe;
-      --text: #182230;
-      --muted: #667085;
-      --line: #d9e2f1;
-      --blue: #2563eb;
-      --blue-2: #4f7cff;
-      --green: #12b76a;
-      --orange: #f79009;
-      --red: #f04438;
-      --purple: #7a5af8;
-      --cyan: #06aed4;
-      --dark: #111827;
-      --dark-2: #172033;
-      --shadow: 0 22px 55px rgba(16, 24, 40, .10);
+      --surface-soft: #fafbfc;
+      --text: #0f172a;
+      --text-soft: #334155;
+      --muted: #64748b;
+      --line: #e8eaee;
+      --line-strong: #d7dbe2;
+      --brand: #4f46e5;
+      --brand-hover: #4338ca;
+      --brand-soft: #eef2ff;
+      --ok: #047857;
+      --ok-soft: #ecfdf5;
+      --warn: #b45309;
+      --warn-soft: #fffbeb;
+      --danger: #b91c1c;
+      --danger-soft: #fef2f2;
+      --code-bg: #0f172a;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+      --r-lg: 14px;
+      --r-md: 10px;
+      --r-sm: 8px;
     }
 
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
 
     body {
       margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at 15% 0%, rgba(37, 99, 235, .18), transparent 32%),
-        radial-gradient(circle at 78% 4%, rgba(122, 90, 248, .18), transparent 30%),
-        linear-gradient(180deg, rgba(255,255,255,.5), transparent 42%),
-        var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      font-family: "Inter", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
     }
 
-    .shell {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 270px 1fr;
-    }
+    button, input, textarea, select { font: inherit; }
 
-    .sidebar {
-      padding: 22px 18px;
-      border-right: 1px solid rgba(255,255,255,.08);
-      background:
-        radial-gradient(circle at 20% 0%, rgba(79,124,255,.35), transparent 28%),
-        linear-gradient(180deg, #101828 0%, #111827 48%, #0b1220 100%);
-      backdrop-filter: blur(16px);
+    /* ---------- App bar ---------- */
+    .appbar {
       position: sticky;
       top: 0;
-      height: 100vh;
-      overflow: auto;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: saturate(180%) blur(8px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .appbar-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
     }
 
     .brand {
       display: flex;
-      gap: 12px;
       align-items: center;
-      margin-bottom: 26px;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
     }
 
-    .logo {
-      width: 42px;
-      height: 42px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, #60a5fa, #8b5cf6);
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
       display: grid;
       place-items: center;
       color: #fff;
-      font-weight: 900;
-      box-shadow: 0 12px 26px rgba(37,99,235,.26);
+      font-size: 16px;
+      background: linear-gradient(135deg, var(--brand), #6366f1);
     }
 
-    .brand h1 { margin: 0; font-size: 17px; color:#fff; }
-    .brand p { margin: 3px 0 0; color: #a8b3c7; font-size: 12px; }
-
-    .nav-title {
-      margin: 18px 0 8px;
-      color: #7d8aa3;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-
-    .nav-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 11px;
-      border-radius: 12px;
-      color: #b7c2d8;
-      font-size: 13px;
-      margin-bottom: 4px;
-      border: 1px solid transparent;
-    }
-
-    .nav-item.active,
-    .nav-item:hover {
-      color: #fff;
-      background: rgba(255,255,255,.1);
-      border-color: rgba(255,255,255,.16);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
-    }
-
-    .main {
-      min-width: 0;
-      padding: 24px;
-    }
-
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 14px;
-      padding: 14px 16px;
-      border: 1px solid rgba(217,226,241,.78);
-      border-radius: 22px;
-      background: rgba(255,255,255,.72);
-      box-shadow: 0 12px 30px rgba(16,24,40,.055);
-      backdrop-filter: blur(14px);
-    }
-
-    .page-title h2 { margin: 0; font-size: 22px; letter-spacing:-.03em; }
-    .page-title p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
-
-    .top-meta { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-    .btn {
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,.76);
-      color: #344054;
-      border-radius: 12px;
-      padding: 10px 13px;
-      font-weight: 700;
-      font-size: 13px;
-      cursor: default;
-    }
-    .btn.primary {
-      color: #fff;
-      border-color: transparent;
-      background: linear-gradient(135deg, #6675ff, var(--blue));
-      box-shadow: 0 12px 24px rgba(37,99,235,.22);
-    }
-
-    .hero {
-      border: 1px solid rgba(201,216,255,.86);
-      border-radius: 28px;
-      background:
-        radial-gradient(circle at 86% 0%, rgba(79,124,255,.32), transparent 28%),
-        radial-gradient(circle at 52% 100%, rgba(6,174,212,.16), transparent 32%),
-        linear-gradient(135deg, rgba(255,255,255,.96), rgba(247,250,255,.9));
-      box-shadow: var(--shadow);
-      padding: 28px;
-      display: grid;
-      grid-template-columns: 1.35fr .65fr;
-      gap: 18px;
-      margin-bottom: 16px;
-    }
-
-    .hero h3 { margin: 0 0 10px; font-size: 32px; letter-spacing:-.04em; }
-    .hero p { margin: 0; color: #52627a; line-height: 1.75; }
-
-    .tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-    .tag {
-      border: 1px solid rgba(214,225,245,.9);
-      border-radius: 999px;
-      padding: 6px 10px;
-      background: rgba(255,255,255,.78);
-      color: #365279;
+    .brand-sub {
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 500;
+      color: var(--muted);
+      padding-left: 10px;
+      margin-left: 4px;
+      border-left: 1px solid var(--line-strong);
     }
 
-    .status-card {
-      border: 1px solid #dce6f8;
-      border-radius: 18px;
-      padding: 16px;
-      background: rgba(255,255,255,.72);
+    .appbar-spacer { flex: 1; }
+
+    .appbar-links { display: flex; align-items: center; gap: 6px; }
+
+    .navlink {
+      color: var(--text-soft);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 7px 11px;
+      border-radius: var(--r-sm);
+      transition: background 0.15s ease, color 0.15s ease;
     }
-    .status-card h4 { margin: 0 0 12px; }
-    .status-row {
+    .navlink:hover { background: var(--surface-soft); color: var(--text); }
+
+    /* ---------- Layout ---------- */
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 24px 56px;
+    }
+
+    .section { margin-top: 26px; }
+    .section:first-child { margin-top: 0; }
+
+    .section-head { margin-bottom: 14px; }
+    .section-head h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .section-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 13px;
+      max-width: 820px;
+    }
+    .section-head.row {
       display: flex;
       justify-content: space-between;
-      gap: 10px;
-      padding: 9px 0;
-      border-bottom: 1px solid #edf2fb;
-      font-size: 13px;
+      align-items: flex-start;
+      gap: 16px;
     }
-    .status-row:last-child { border-bottom: none; }
-    .status-row span { color: var(--muted); }
-    .status-row b { color: #173b7a; }
 
-    .metrics {
+    /* ---------- Hero ---------- */
+    .hero {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 20px;
+      align-items: stretch;
     }
 
-    .metric {
+    .hero-main {
+      background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      background: rgba(255,255,255,.86);
-      padding: 16px;
-      box-shadow: 0 10px 28px rgba(16,24,40,.04);
-      position: relative;
-      overflow: hidden;
+      border-radius: var(--r-lg);
+      padding: 28px;
+      box-shadow: var(--shadow-sm);
     }
-    .metric::after {
-      content:"";
-      position:absolute;
-      right:-18px;
-      top:-18px;
-      width:70px;
-      height:70px;
-      border-radius:999px;
-      background:rgba(37,99,235,.08);
-    }
-    .metric span { color: var(--muted); font-size: 12px; }
-    .metric b { display: block; margin-top: 8px; font-size: 25px; }
 
+    .hero-main h1 {
+      margin: 14px 0 10px;
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      max-width: 640px;
+    }
+
+    .hero-main p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+      max-width: 640px;
+    }
+
+    .hero-tags, .inline-tags, .examples, .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .hero-tags { margin-top: 18px; }
+
+    /* ---------- Snapshot tiles ---------- */
+    .snapshot {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+    }
+    .snapshot h2 { margin: 0 0 14px; font-size: 14px; font-weight: 700; }
+    .snapshot-list { display: grid; gap: 0; }
+    .snapshot-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .snapshot-item:last-child { border-bottom: 0; padding-bottom: 0; }
+    .snapshot-item span { color: var(--muted); font-size: 13px; }
+    .snapshot-item strong { color: var(--text); font-size: 13px; font-weight: 600; text-align: right; }
+
+    /* ---------- Pills & chips ---------- */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--surface-soft);
+      color: var(--text-soft);
+      border: 1px solid var(--line-strong);
+      white-space: nowrap;
+    }
+    .pill.brand { background: var(--brand-soft); color: var(--brand); border-color: #dfe3fb; }
+    .pill.ok { background: var(--ok-soft); color: var(--ok); border-color: #c7f0dd; }
+    .pill.partial { background: var(--warn-soft); color: var(--warn); border-color: #fce7c0; }
+    .pill.mock { background: var(--danger-soft); color: var(--danger); border-color: #fbd5d5; }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-soft);
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+    }
+
+    code, .mono { font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace; }
+
+    /* ---------- Skill cards ---------- */
     .grid {
       display: grid;
-      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 14px;
     }
 
     .card {
+      padding: 18px;
+      border-radius: var(--r-lg);
+      background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 20px;
-      background: rgba(255,255,255,.9);
-      padding: 16px;
-      box-shadow: 0 10px 28px rgba(16,24,40,.045);
+      cursor: pointer;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: var(--shadow-sm);
     }
-    .card.soft-blue { background: linear-gradient(135deg, #ffffff, #f5f8ff); }
-    .card.soft-purple { background: linear-gradient(135deg, #ffffff, #f8f5ff); }
+    .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+    .card.active { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand), var(--shadow-md); }
 
-    .span-4 { grid-column: span 4; }
-    .span-5 { grid-column: span 5; }
-    .span-6 { grid-column: span 6; }
-    .span-7 { grid-column: span 7; }
-    .span-8 { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
+    .card-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 19px;
+      background: var(--brand-soft);
+      border: 1px solid #e3e7fb;
+    }
+    .card h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .card p { margin: 0; color: var(--muted); line-height: 1.6; font-size: 13px; }
+    .card small { display: block; color: var(--muted); line-height: 1.55; font-size: 12px; }
+    .card .inline-tags { gap: 6px; }
 
-    .section-head {
+    /* ---------- Panels ---------- */
+    .panel-wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 22px;
+      box-shadow: var(--shadow-sm);
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+    .panel > p { margin: 0; color: var(--muted); line-height: 1.65; font-size: 13px; }
+
+    .meta-block { margin-top: 18px; display: grid; gap: 16px; }
+
+    .label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .meta-list, .evidence-list, .trace-list, .warning-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-soft);
+      line-height: 1.65;
+      font-size: 13px;
+    }
+    .meta-list li, .evidence-list li, .trace-list li, .warning-list li { margin-bottom: 6px; }
+
+    /* ---------- Form ---------- */
+    .control-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .control-grid .full { grid-column: 1 / -1; }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-sm);
+      background: var(--surface);
+      color: var(--text);
+      padding: 10px 12px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
+    input::placeholder, textarea::placeholder { color: #9aa4b2; }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+    }
+
+    .primary-btn, .ghost-btn, .example-btn {
+      cursor: pointer;
+      border-radius: var(--r-sm);
+      font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .primary-btn, .ghost-btn { padding: 10px 18px; font-size: 14px; }
+
+    .primary-btn { background: var(--brand); color: #fff; border: 1px solid var(--brand); }
+    .primary-btn:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+
+    .ghost-btn { background: var(--surface); color: var(--text-soft); border: 1px solid var(--line-strong); }
+    .ghost-btn:hover { background: var(--surface-soft); border-color: var(--muted); }
+
+    .example-btn {
+      background: var(--surface-soft);
+      color: var(--text-soft);
+      border: 1px solid var(--line);
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .example-btn:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+
+    /* ---------- Results ---------- */
+    .result-shell { display: grid; gap: 14px; }
+
+    .status-banner {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 14px;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 16px;
+      border-radius: var(--r-md);
+      background: var(--brand-soft);
+      border: 1px solid #e3e7fb;
+      color: var(--brand);
+      font-size: 13px;
+      font-weight: 500;
     }
-    .section-head h3 { margin: 0; font-size: 16px; }
-    .section-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .status-banner b { font-size: 13px; font-weight: 700; }
 
-    .pill {
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 18px;
+      box-shadow: var(--shadow-sm);
+    }
+    .result-card h4 {
+      margin: 0 0 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .answer-box { white-space: pre-wrap; line-height: 1.7; font-size: 14px; color: var(--text); }
+
+    .result-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .result-card-head h4 { margin: 0; }
+
+    .copy-btn {
+      cursor: pointer;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--text-soft);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    .copy-btn:hover { background: var(--brand-soft); color: var(--brand); border-color: #dfe3fb; }
+    .copy-btn.done { background: var(--ok-soft); color: var(--ok); border-color: #c7f0dd; }
+
+    /* ---- structured view ---- */
+    .structured-view { display: grid; gap: 14px; }
+    .structured-view:empty { display: none; }
+
+    .sv-empty { color: var(--muted); font-size: 13px; }
+
+    .calc-card {
+      border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      padding: 14px 16px;
+      background: var(--surface-soft);
+    }
+    .calc-headline {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .calc-result { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; color: var(--brand); }
+    .calc-type { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .calc-formula {
+      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+      font-size: 13px;
+      color: var(--text-soft);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      overflow-x: auto;
+    }
+
+    table.sv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.sv-table th, table.sv-table td {
+      text-align: left;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    table.sv-table th {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: var(--surface-soft);
+    }
+    table.sv-table td.field-name { font-weight: 600; color: var(--text); }
+    table.sv-table tr.is-empty td { color: #9aa4b2; }
+    .mono-cell { font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace; }
+
+    .tag {
       display: inline-flex;
       align-items: center;
+      padding: 2px 8px;
       border-radius: 999px;
-      padding: 4px 8px;
       font-size: 11px;
-      font-weight: 800;
-      background: #eef4ff;
-      color: #2254b8;
-      white-space: nowrap;
+      font-weight: 600;
     }
-    .pill.ok { background: #ecfdf3; color: #067647; }
-    .pill.plan { background: #fff7ed; color: #b54708; }
-    .pill.danger { background: #fef3f2; color: #b42318; }
+    .tag.ok { background: var(--ok-soft); color: var(--ok); }
+    .tag.low { background: var(--warn-soft); color: var(--warn); }
+    .tag.none { background: var(--surface-soft); color: var(--muted); }
+    .tag.masked { background: var(--danger-soft); color: var(--danger); }
 
-    .agent-grid {
+    .matrix-row {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: 120px 1fr auto;
       gap: 12px;
+      align-items: center;
+      padding: 7px 0;
     }
+    .matrix-skill { font-size: 13px; font-weight: 600; }
+    .matrix-bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+    .matrix-bar > span { display: block; height: 100%; border-radius: 999px; }
+    .matrix-bar > span.hit { background: var(--brand); }
+    .matrix-bar > span.miss { background: var(--line-strong); width: 0; }
+    .matrix-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
-    .agent {
-      border: 1px solid #e1e8f5;
-      border-radius: 18px;
-      padding: 14px;
-      background: linear-gradient(180deg, #fff, #fbfdff);
-      min-height: 170px;
-      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-      position: relative;
-      overflow: hidden;
-      cursor: pointer;
+    .score-badge {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: var(--r-md);
+      background: var(--brand-soft);
+      border: 1px solid #dfe3fb;
     }
-    .agent::after {
-      content:"";
-      position:absolute;
-      width:82px;
-      height:82px;
-      right:-32px;
-      top:-32px;
-      border-radius:999px;
-      background:rgba(37,99,235,.06);
+    .score-badge b { font-size: 26px; font-weight: 800; color: var(--brand); letter-spacing: -0.02em; }
+    .score-badge span { font-size: 12px; color: var(--muted); }
+
+    .sv-section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
     }
-    .agent:hover {
-      transform: translateY(-2px);
-      border-color:#bcd0ff;
-      box-shadow: 0 18px 36px rgba(37,99,235,.08);
-    }
-    .agent-top {
+    .sv-block + .sv-block { margin-top: 4px; }
+    .sv-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.65; color: var(--text-soft); }
+    .sv-list li { margin-bottom: 5px; }
+
+    .alert {
       display: flex;
-      justify-content: space-between;
       gap: 8px;
       align-items: flex-start;
-    }
-    .agent-icon { font-size: 24px; }
-    .agent h4 { margin: 10px 0 6px; }
-    .agent p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-    .agent-action {
-      margin-top: 12px;
-      color: #1d4ed8;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-    .chip {
-      border-radius: 999px;
-      border: 1px solid #e1e8f5;
-      color: #475467;
-      background: #f8fafc;
-      padding: 4px 7px;
-      font-size: 11px;
-    }
-
-    .flow {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .node {
-      border: 1px solid #dbe6f8;
-      border-radius: 16px;
-      padding: 12px;
-      min-height: 110px;
-      background: #fbfdff;
-    }
-    .node b { display: block; margin-bottom: 7px; color: #1b3b6f; }
-    .node span { color: var(--muted); font-size: 12px; line-height: 1.5; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    th, td {
-      padding: 10px 8px;
-      border-bottom: 1px solid #edf2fb;
-      text-align: left;
-      vertical-align: top;
-    }
-    th { color: #58677f; background: #fafcff; font-weight: 800; }
-    td { color: #344054; }
-
-    .roadmap {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .step {
-      border: 1px solid #dbe6f8;
-      border-radius: 16px;
-      background: #fbfdff;
-      padding: 12px;
-      min-height: 140px;
-    }
-    .step b { display: block; color: #1b3b6f; margin-bottom: 8px; }
-    .step span { color: var(--muted); font-size: 12px; line-height: 1.55; }
-
-    .note {
-      border-left: 4px solid var(--blue);
-      background: #f5f8ff;
-      color: #43536f;
-      padding: 12px 14px;
-      border-radius: 14px;
+      padding: 10px 12px;
+      border-radius: var(--r-sm);
       font-size: 13px;
-      line-height: 1.7;
+      line-height: 1.55;
     }
-    .embodied-grid {
-      display:grid;
-      grid-template-columns: repeat(4,minmax(0,1fr));
-      gap:10px;
+    .alert.block { background: var(--danger-soft); color: var(--danger); border: 1px solid #fbd5d5; }
+
+    .raw-json { margin-top: 12px; }
+    .raw-json > summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 4px 0;
+      user-select: none;
     }
-    .embodied-card {
-      border:1px solid #dbe6f8;
-      border-radius:18px;
-      background:linear-gradient(180deg,#fff,#fbfdff);
-      padding:14px;
-      min-height:150px;
+    .raw-json > summary:hover { color: var(--text-soft); }
+    .raw-json[open] > summary { margin-bottom: 8px; }
+
+    .is-loading { position: relative; opacity: 0.6; }
+    .spinner {
+      display: inline-block;
+      width: 13px; height: 13px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: -2px;
+      margin-right: 6px;
     }
-    .embodied-card h4 { margin:8px 0 6px; }
-    .embodied-card p { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
-    .mini-icon {
-      width:34px;
-      height:34px;
-      display:grid;
-      place-items:center;
-      border-radius:12px;
-      background:#eef4ff;
-      color:#1d4ed8;
-      font-size:18px;
-    }
-    .focus-banner {
-      display:grid;
-      grid-template-columns: 1.1fr .9fr;
-      gap:14px;
-      margin-bottom:16px;
-    }
-    .focus-panel {
-      border:1px solid rgba(188,208,255,.8);
-      border-radius:22px;
-      background:linear-gradient(135deg,rgba(255,255,255,.9),rgba(245,248,255,.92));
-      padding:16px;
-      box-shadow:0 12px 30px rgba(37,99,235,.06);
-    }
-    .focus-panel h3 { margin:0 0 8px; font-size:16px; }
-    .focus-panel p { margin:0; color:var(--muted); font-size:13px; line-height:1.7; }
-    .focus-list {
-      display:grid;
-      grid-template-columns:repeat(2,minmax(0,1fr));
-      gap:8px;
-      margin-top:12px;
-    }
-    .focus-item {
-      border:1px solid #e1e8f5;
-      border-radius:14px;
-      padding:10px;
-      background:#fff;
-      font-size:12px;
-      color:#40506a;
-    }
-    .modal-mask {
-      position: fixed;
-      inset: 0;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      background: rgba(15,23,42,.42);
-      backdrop-filter: blur(8px);
-      z-index: 30;
-    }
-    .modal-mask.show { display:flex; }
-    .modal {
-      width: min(720px, 100%);
-      border-radius: 24px;
-      background: #fff;
-      box-shadow: 0 30px 80px rgba(15,23,42,.25);
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,.6);
-    }
-    .modal-head {
-      padding: 18px 20px;
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:16px;
-      background: linear-gradient(135deg,#f8fbff,#eef4ff);
-      border-bottom:1px solid #e1e8f5;
-    }
-    .modal-head h3 { margin:0; font-size:20px; }
-    .modal-head p { margin:6px 0 0; color:var(--muted); font-size:13px; }
-    .modal-close {
-      border:0;
-      width:34px;
-      height:34px;
-      border-radius:12px;
-      background:#fff;
-      color:#475467;
-      font-size:18px;
-      cursor:pointer;
-    }
-    .modal-body { padding:18px 20px 20px; }
-    .demo-box {
-      border:1px solid #dbe6f8;
-      border-radius:18px;
-      background:#fbfdff;
-      padding:14px;
-      color:#344054;
-      line-height:1.75;
-      font-size:13px;
-    }
-    .demo-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
-    .demo-btn {
-      border:1px solid #d7e3f7;
-      background:#fff;
-      color:#1d4ed8;
-      border-radius:999px;
-      padding:8px 11px;
-      font-weight:800;
-      font-size:12px;
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      border-radius: var(--r-md);
+      padding: 16px;
+      background: var(--code-bg);
+      color: #e2e8f0;
+      font-size: 12.5px;
+      line-height: 1.65;
+      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
     }
 
-    @media (max-width: 1180px) {
-      .shell { grid-template-columns: 1fr; }
-      .sidebar { position: relative; height: auto; }
-      .hero { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
-      .span-4,.span-5,.span-6,.span-7,.span-8,.span-12 { grid-column: span 12; }
-      .agent-grid,.flow,.roadmap,.embodied-grid { grid-template-columns: 1fr; }
-      .focus-banner,.focus-list { grid-template-columns:1fr; }
+    /* ---------- Footer ---------- */
+    .footer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .footer-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .footer-card h3 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+    .footer-card p { margin: 0; color: var(--muted); line-height: 1.65; font-size: 13px; }
+
+    .muted { color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 1080px) {
+      .hero, .panel-wrap, .grid, .footer-grid { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 20px 16px 40px; }
+      .appbar-inner { padding: 0 16px; }
+      .brand-sub { display: none; }
+      .grid { grid-template-columns: 1fr; }
+      .control-grid { grid-template-columns: 1fr; }
+      .hero-main h1 { font-size: 23px; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .primary-btn, .ghost-btn { width: 100%; text-align: center; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
+  <header class="appbar">
+    <div class="appbar-inner">
       <div class="brand">
-        <div class="logo">A</div>
-        <div>
-          <h1>Agent 中台</h1>
-          <p>Enterprise Agent Platform</p>
-        </div>
+        <span class="brand-mark">◆</span>
+        企业级 AI Agent 中台
+        <span class="brand-sub">Skill Registry · Runtime</span>
       </div>
-
-      <div class="nav-title">工作台</div>
-      <div class="nav-item active">🏠 总览大屏</div>
-      <div class="nav-item">🤖 Agent 市场</div>
-      <div class="nav-item">🧩 Skill Registry</div>
-      <div class="nav-item">🔌 MCP Gateway</div>
-      <div class="nav-item">🧠 Memory / Wiki</div>
-
-      <div class="nav-title">能力中心</div>
-      <div class="nav-item">📚 企业知识库 Agent</div>
-      <div class="nav-item">🧾 报销发票 Agent</div>
-      <div class="nav-item">📑 合同审核 Agent</div>
-      <div class="nav-item">📊 数据分析 Agent</div>
-      <div class="nav-item">🤖 人形机器人 Agent</div>
-      <div class="nav-item">🚗 车载设备 Agent</div>
-
-      <div class="nav-title">治理</div>
-      <div class="nav-item">🛡️ 权限与安全</div>
-      <div class="nav-item">📈 监控与评测</div>
-      <div class="nav-item">⚙️ 模型路由</div>
-    </aside>
-
-    <main class="main">
-      <div class="topbar">
-        <div class="page-title">
-          <h2>企业级 Agent 中台</h2>
-          <p>主攻方向：具身智能 / 人形机器人 / 车载设备 / 企业 Agent Runtime</p>
-        </div>
-        <div class="top-meta">
-          <span class="pill ok">RAG 已可用</span>
-          <span class="pill">Agent 中台原型</span>
-          <span class="pill danger">50W+ Offer 专项</span>
-        </div>
-      </div>
-
-      <section class="hero">
-        <div>
-          <h3>从“文档问答”升级为“企业智能执行平台”</h3>
-          <p>
-            当前项目的 RAG 检索会作为 <b>Knowledge Agent / Knowledge Skill</b> 接入这里。
-            中台本身负责 Agent 创建、Skill 编排、MCP 工具治理、Memory、模型路由、安全门控、执行轨迹和评测。
-            求职方向不做泛泛的 Demo，而是专项对齐具身智能公司：人形机器人任务大脑、车载设备 Agent、VLM 感知、动作安全门控和可审计执行闭环。
-          </p>
-          <div class="tag-row">
-            <span class="tag">Agentic Engineering</span>
-            <span class="tag">Agent Runtime</span>
-            <span class="tag">Skill + MCP</span>
-            <span class="tag">Memory / LLM Wiki</span>
-            <span class="tag">VLM / Multimodal</span>
-            <span class="tag">Safety Gate</span>
-            <span class="tag">Private vLLM</span>
-          </div>
-        </div>
-        <div class="status-card">
-          <h4>当前实现边界</h4>
-          <div class="status-row"><span>真实可用</span><b>多模态 RAG</b></div>
-          <div class="status-row"><span>前端展示</span><b>Agent 中台</b></div>
-          <div class="status-row"><span>后续接入</span><b>Skill Registry</b></div>
-          <div class="status-row"><span>具身扩展</span><b>Humanoid Mock</b></div>
-          <div class="status-row"><span>设备扩展</span><b>Vehicle Agent</b></div>
-          <div class="status-row"><span>生产部署</span><b>vLLM / Milvus</b></div>
-        </div>
-      </section>
-
-      <section class="focus-banner">
-        <div class="focus-panel">
-          <h3>专项定位：不是“什么都做”，而是为具身智能 AI Agent 岗位服务</h3>
-          <p>
-            页面上的每个模块都围绕一个目标：证明这个项目不是普通 RAG，而是可以扩展成机器人/车载/设备侧 Agent 大脑的中台。
-            现在先做产品壳和架构表达，后续逐步把真实 RAG、MCP、Memory、VLM、动作模拟器接进去。
-          </p>
-        </div>
-        <div class="focus-panel">
-          <h3>Offer 能力映射</h3>
-          <div class="focus-list">
-            <div class="focus-item">Agent Runtime：任务规划、路由、执行、校验</div>
-            <div class="focus-item">Embodied AI：感知、世界状态、动作、安全</div>
-            <div class="focus-item">MCP / Skill：企业系统与设备工具接入</div>
-            <div class="focus-item">Production：权限、评测、可观测、降级</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="metrics">
-        <div class="metric"><span>Agent 模板</span><b>16</b></div>
-        <div class="metric"><span>规划 Skill</span><b>36</b></div>
-        <div class="metric"><span>模型 Provider</span><b>5</b></div>
-        <div class="metric"><span>MCP 扩展</span><b>∞</b></div>
-      </section>
-
-      <section class="grid">
-        <div class="card span-12">
-          <div class="section-head">
-            <div>
-              <h3>Agent 市场 / 企业数字员工</h3>
-              <p>这里是企业用户真正看到的产品入口；每个 Agent 背后绑定一组 Skill、工具、知识库和权限策略。</p>
-            </div>
-            <span class="pill">Marketplace</span>
-          </div>
-          <div class="agent-grid">
-            <div class="agent" data-title="企业知识库 Agent" data-desc="当前唯一真实接入的核心能力。后续会把现有多模态 RAG 封装成 Knowledge Skill，支持文档问答、页图证据、跨页检索、评测与轨迹回放。" data-flow="上传文档 → 建库 → 检索候选页 → VLM/LLM 生成 → Verifier 校验 → 输出证据。">
-              <div class="agent-top"><span class="agent-icon">📚</span><span class="pill ok">已接入</span></div>
-              <h4>企业知识库 Agent</h4>
-              <p>接入现有 RAG：文档问答、图表理解、跨页证据、研究报告。</p>
-              <div class="chips"><span class="chip">Agentic RAG</span><span class="chip">VLM</span><span class="chip">Evidence</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="报销发票 Agent" data-desc="企业中台的典型业务 Agent，用来展示 Skill 编排能力。真实实现时接入 OCR、财务制度知识库、审批系统 MCP 和人工确认。" data-flow="上传发票 → OCR 抽取 → 制度校验 → 异常提示 → 生成报销草稿 → 等待人工确认。">
-              <div class="agent-top"><span class="agent-icon">🧾</span><span class="pill plan">规划</span></div>
-              <h4>报销发票 Agent</h4>
-              <p>识别发票，校验金额、日期和抬头，查询报销制度，生成审批单。</p>
-              <div class="chips"><span class="chip">OCR</span><span class="chip">Policy RAG</span><span class="chip">审批 MCP</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="合同审核 Agent" data-desc="展示企业级 Agent 的风控能力：不是直接替人签合同，而是抽取风险点、给出证据、要求人工确认。" data-flow="解析合同 → 抽取关键条款 → 对照模板/法务规则 → 风险分级 → 输出审核意见。">
-              <div class="agent-top"><span class="agent-icon">📑</span><span class="pill plan">规划</span></div>
-              <h4>合同审核 Agent</h4>
-              <p>抽取主体、金额、期限、违约条款，输出风险清单和证据引用。</p>
-              <div class="chips"><span class="chip">Doc AI</span><span class="chip">Risk</span><span class="chip">Verifier</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="数据分析 Agent" data-desc="用于体现模型调用企业数据的能力。重点不是炫技，而是展示 Text2SQL、图表解释、权限边界和审计。" data-flow="理解问题 → 选择数据源 → 生成 SQL → 查询 → 图表解释 → 生成经营分析。">
-              <div class="agent-top"><span class="agent-icon">📊</span><span class="pill plan">规划</span></div>
-              <h4>数据分析 Agent</h4>
-              <p>连接 Excel / MySQL，生成 SQL、图表、异常解释和经营分析报告。</p>
-              <div class="chips"><span class="chip">Text2SQL</span><span class="chip">Chart QA</span><span class="chip">Report</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="研发提效 Agent" data-desc="用来承接你的后端工程背景：代码问答、日志排查、发布复盘、测试生成，面试时能自然讲到工程化。" data-flow="读取代码/日志 → 定位异常 → 生成修复建议 → 生成测试用例 → 输出复盘报告。">
-              <div class="agent-top"><span class="agent-icon">🧑‍💻</span><span class="pill plan">规划</span></div>
-              <h4>研发提效 Agent</h4>
-              <p>代码问答、日志分析、Bug 排查、测试用例生成和发布复盘。</p>
-              <div class="chips"><span class="chip">Code RAG</span><span class="chip">Log Tool</span><span class="chip">Test Gen</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="人形机器人 Agent" data-desc="这是本页面的核心专项：面向人形机器人的任务大脑。现在是 Mock，未来接入 VLM、World State、机器人控制 MCP、动作后验证。" data-flow="用户任务 → 场景感知 → 任务拆解 → 动作候选 → Safety Gate → 执行动作 → 状态回读校验。">
-              <div class="agent-top"><span class="agent-icon">🤖</span><span class="pill danger">Mock</span></div>
-              <h4>人形机器人 Agent</h4>
-              <p>面向人形机器人：场景理解、任务规划、动作安全门控、动作后校验。</p>
-              <div class="chips"><span class="chip">World State</span><span class="chip">Action Skill</span><span class="chip">Safety Gate</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="车载设备 Agent" data-desc="保留车载方向，但不再作为唯一主线。它用于展示设备 Agent：语音入口、车控 Skill、VLM 看图、Memory、动作风险分级。" data-flow="语音/文本 → Intent → 车控 Skill → 风险判断 → MCP 调用 → 车辆状态回读。">
-              <div class="agent-top"><span class="agent-icon">🚗</span><span class="pill plan">规划</span></div>
-              <h4>车载设备 Agent</h4>
-              <p>面向智能座舱/车控：语音意图、车控工具、VLM 状态理解、动作确认。</p>
-              <div class="chips"><span class="chip">Vehicle MCP</span><span class="chip">Voice</span><span class="chip">Action Verify</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="机器人记忆 Agent" data-desc="给具身智能加上 Memory：记住用户偏好、任务上下文、环境变化和历史失败原因，让机器人不是一次性问答。" data-flow="任务开始 → 读取用户/场景记忆 → 执行 → 写入结果/失败原因 → 下次任务复用。">
-              <div class="agent-top"><span class="agent-icon">🧠</span><span class="pill plan">规划</span></div>
-              <h4>机器人记忆 Agent</h4>
-              <p>维护用户偏好、场景状态、历史任务、失败复盘，让动作决策可持续优化。</p>
-              <div class="chips"><span class="chip">Memory</span><span class="chip">World Model</span><span class="chip">Replay</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-            <div class="agent" data-title="VLM 场景理解 Agent" data-desc="面向人形机器人和车载设备的视觉理解入口。当前可以先用千问 API 模拟，未来切换到自部署 VLM 或端云协同模型。" data-flow="图片/视频帧 → VLM 识别 → 结构化 Observation → 风险判断 → 交给 Planner。">
-              <div class="agent-top"><span class="agent-icon">👁️</span><span class="pill plan">规划</span></div>
-              <h4>VLM 场景理解 Agent</h4>
-              <p>把图像、视频帧、设备状态转成结构化 Observation，供机器人 Planner 使用。</p>
-              <div class="chips"><span class="chip">VLM</span><span class="chip">Observation</span><span class="chip">Scene Graph</span></div>
-              <div class="agent-action">点击查看模拟运行 →</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card span-12">
-          <div class="section-head">
-            <div>
-              <h3>Agent Runtime 执行链路</h3>
-              <p>中台的核心不是堆功能，而是把模型能力变成可靠、可控、可审计的执行系统。</p>
-            </div>
-            <span class="pill">Harness</span>
-          </div>
-          <div class="flow">
-            <div class="node"><b>1. Intent</b><span>识别用户任务：问答、审批、分析、控制、研究。</span></div>
-            <div class="node"><b>2. Plan</b><span>Plan-and-Execute / LangGraph 拆解任务步骤。</span></div>
-            <div class="node"><b>3. Route</b><span>选择 Agent、Skill、MCP 工具和模型 Provider。</span></div>
-            <div class="node"><b>4. Execute</b><span>调用 RAG、VLM、数据库、审批、设备控制。</span></div>
-            <div class="node"><b>5. Verify</b><span>证据校验、动作校验、失败重试和降级。</span></div>
-            <div class="node"><b>6. Trace</b><span>SSE 轨迹、审计、评测、成本和复盘。</span></div>
-          </div>
-        </div>
-
-        <div class="card span-7">
-          <div class="section-head">
-            <div><h3>Skill / MCP / Memory 中台能力</h3><p>这些是未来真正要实现的后端模块。</p></div>
-          </div>
-          <table>
-            <tr><th>模块</th><th>职责</th><th>状态</th></tr>
-            <tr><td>Skill Registry</td><td>管理 Skill schema、权限、超时、fallback、风险等级。</td><td><span class="pill plan">规划</span></td></tr>
-            <tr><td>MCP Gateway</td><td>统一接入企业系统，做工具发现、参数校验、审计。</td><td><span class="pill ok">已有基础</span></td></tr>
-            <tr><td>Memory System</td><td>Working / Short-term / Long-term / User Profile / World State。</td><td><span class="pill plan">规划</span></td></tr>
-            <tr><td>Enterprise Wiki</td><td>参考 Karpathy LLM Wiki，把知识沉淀为实体页、概念页、FAQ。</td><td><span class="pill plan">规划</span></td></tr>
-            <tr><td>Model Router</td><td>Qwen、DeepSeek、GLM、GPT、本地 vLLM、端侧 SLM。</td><td><span class="pill plan">规划</span></td></tr>
-          </table>
-        </div>
-
-        <div class="card span-5 soft-purple">
-          <div class="section-head">
-            <div><h3>具身智能扩展</h3><p>主线聚焦人形机器人，同时保留车载设备作为设备 Agent 场景。</p></div>
-          </div>
-          <table>
-            <tr><th>环节</th><th>设计</th></tr>
-            <tr><td>Perception</td><td>摄像头、传感器、VLM 输出 → Observation。</td></tr>
-            <tr><td>World State</td><td>记录机器人姿态、手臂/底盘状态、周围物体、用户意图、环境约束。</td></tr>
-            <tr><td>Action Skill</td><td>移动、转向、抓取、递送、拍照、播报、车控等动作全部 schema 化。</td></tr>
-            <tr><td>Safety Gate</td><td>查询/低风险/确认/拒绝四级策略。</td></tr>
-            <tr><td>Action Verifier</td><td>动作后读取状态确认执行结果。</td></tr>
-          </table>
-        </div>
-
-        <div class="card span-12 soft-blue">
-          <div class="section-head">
-            <div>
-              <h3>具身智能扩展包</h3>
-              <p>未来如果投人形机器人/具身智能/智能硬件岗位，这一层就是项目的差异化展示。</p>
-            </div>
-            <span class="pill danger">Embodied AI</span>
-          </div>
-          <div class="embodied-grid">
-            <div class="embodied-card">
-              <div class="mini-icon">👁️</div>
-              <h4>Perception Adapter</h4>
-              <p>统一摄像头、深度图、传感器、VLM、IoT 状态，输出标准 Observation。</p>
-            </div>
-            <div class="embodied-card">
-              <div class="mini-icon">🧭</div>
-              <h4>World State</h4>
-              <p>维护位置、速度、负载、设备状态、环境风险和任务上下文。</p>
-            </div>
-            <div class="embodied-card">
-              <div class="mini-icon">🦾</div>
-              <h4>Action Skill</h4>
-              <p>把移动、转向、抓取、递送、拍照、播报、车控封装成可治理 Skill。</p>
-            </div>
-            <div class="embodied-card">
-              <div class="mini-icon">🛡️</div>
-              <h4>Safety Gate</h4>
-              <p>高风险动作必须确认或拒绝；所有动作保留 dry-run 和审计记录。</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="card span-12">
-          <div class="section-head">
-            <div><h3>生产级工程能力</h3><p>面试和落地都要讲清楚：稳定性、权限、成本、可观测、评测。</p></div>
-            <span class="pill">Production</span>
-          </div>
-          <div class="grid">
-            <div class="card span-4"><h4>模型与部署</h4><p class="note">OpenAI-compatible 开发适配；生产切换 vLLM、私有模型、Milvus/Qdrant、Redis、Docker/K8s。</p></div>
-            <div class="card span-4"><h4>安全治理</h4><p class="note">JWT、RBAC/ACL、工具权限、Prompt Injection 防护、动作风险分级、审计日志。</p></div>
-            <div class="card span-4"><h4>可观测评测</h4><p class="note">SSE Trace、Prometheus/Grafana、OpenTelemetry、Golden Dataset、Trajectory Evaluation、压测。</p></div>
-          </div>
-        </div>
-
-        <div class="card span-12">
-          <div class="section-head">
-            <div><h3>实施路线</h3><p>先有一个完整中台壳，再把现有 RAG 作为第一个真实 Agent 接进去。</p></div>
-          </div>
-          <div class="roadmap">
-            <div class="step"><b>M1 页面原型</b><span>完成当前企业级中台页面，展示所有核心模块。</span></div>
-            <div class="step"><b>M2 接入 RAG</b><span>把现有 RAG 检索封装为 Knowledge Agent / Skill。</span></div>
-            <div class="step"><b>M3 Skill Registry</b><span>定义 Skill schema、权限、超时、fallback、风险等级。</span></div>
-            <div class="step"><b>M4 MCP Gateway</b><span>统一接入数据库、审批、车载设备和机器人 mock。</span></div>
-            <div class="step"><b>M5 Memory / Wiki</b><span>加入长期记忆和企业知识 Wiki 层。</span></div>
-            <div class="step"><b>M6 具身 Mock</b><span>Humanoid Mock 跑通感知-规划-动作-反馈。</span></div>
-          </div>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <div class="modal-mask" id="agentModal" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <div class="modal-head">
-        <div>
-          <h3 id="modalTitle">Agent 模拟运行</h3>
-          <p id="modalDesc">这里展示模拟效果，后续再接入真实后端。</p>
-        </div>
-        <button class="modal-close" id="modalClose" aria-label="关闭">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="demo-box" id="modalFlow"></div>
-        <div class="demo-actions">
-          <button class="demo-btn">模拟创建任务</button>
-          <button class="demo-btn">查看执行轨迹</button>
-          <button class="demo-btn">绑定 Skill</button>
-          <button class="demo-btn">配置权限策略</button>
-        </div>
-      </div>
+      <div class="appbar-spacer"></div>
+      <nav class="appbar-links">
+        <a class="navlink" href="/chat">问答页</a>
+        <a class="navlink" href="/docs">API 文档</a>
+        <span class="pill" id="apiStatus">正在探测 API…</span>
+      </nav>
     </div>
+  </header>
+
+  <div class="wrap">
+    <section class="section hero">
+      <div class="hero-main">
+        <span class="pill ok">RAG Skill 已接真实链路</span>
+        <h1>把四个高频企业 Skill，跑在同一套 RAG 底座上</h1>
+        <p>
+          保留现有 <code>/chat</code>、Workspace、SSE Trace、ResearchJob 与评测底座，新增统一 Skill 抽象层，
+          把多模态 RAG 封装为第一个真实可用的 <code>RAG Skill</code>，并围绕企业知识库问答、报表分析、
+          合同/表单/发票抽取、HR 招聘辅助四个场景提供最小可运行闭环。
+        </p>
+        <div class="hero-tags">
+          <span class="pill brand">Skill Registry</span>
+          <span class="pill">/agent-center/skills</span>
+          <span class="pill">/agent-center/run</span>
+          <span class="pill">Evidence Pages</span>
+          <span class="pill">Trace / Verifier</span>
+        </div>
+      </div>
+
+      <aside class="snapshot">
+        <h2>当前实现快照</h2>
+        <div class="snapshot-list">
+          <div class="snapshot-item"><span>真实底座能力</span><strong>页级 RAG + Router + Verifier</strong></div>
+          <div class="snapshot-item"><span>新增能力入口</span><strong class="mono">/agent-center/*</strong></div>
+          <div class="snapshot-item"><span>Skill 数量</span><strong id="skillCount">4 个</strong></div>
+          <div class="snapshot-item"><span>最成熟功能</span><strong>企业知识库问答</strong></div>
+          <div class="snapshot-item"><span>当前口径</span><strong>RAG 实现 · 其余 partial</strong></div>
+          <div class="snapshot-item"><span>前端策略</span><strong>API 不可用回退 mock</strong></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section">
+      <div class="section-head row">
+        <div>
+          <h2>四大企业功能</h2>
+          <p>每个卡片都对齐统一 <code>SkillSpec</code>：说明、技术细节、状态、示例问题与运行入口。真实实现与 partial / mock 明确标注，不把未实测能力包装成生产可用。</p>
+        </div>
+      </div>
+      <div class="grid" id="skillGrid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head row">
+        <div>
+          <h2>Skill 详情与运行台</h2>
+          <p>左侧是当前选中 Skill 的定位、能力和示例问题，右侧可直接调用 <code>/agent-center/run</code>。后端不可用时自动生成结构一致的 mock 结果用于演示。</p>
+        </div>
+        <div class="inline-tags">
+          <span class="pill ok" id="modeTag">Live API</span>
+          <span class="pill" id="selectedTag">当前 Skill：企业知识库问答</span>
+        </div>
+      </div>
+
+      <div class="panel-wrap">
+        <article class="panel">
+          <h3 id="detailTitle">企业知识库问答</h3>
+          <p id="detailDescription"></p>
+          <div class="meta-block">
+            <div>
+              <span class="label">技术细节</span>
+              <div class="inline-tags" id="detailCapabilities"></div>
+            </div>
+            <div>
+              <span class="label">状态与边界</span>
+              <ul class="meta-list" id="detailMeta"></ul>
+            </div>
+            <div>
+              <span class="label">示例问题</span>
+              <div class="examples" id="detailExamples"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <h3>运行模拟 / 实际调用</h3>
+          <div class="control-grid" style="margin-top:16px">
+            <div class="full">
+              <label class="label" for="apiBase">API Base</label>
+              <input id="apiBase" value="" placeholder="默认使用当前页面同源地址，例如 http://127.0.0.1:8000" />
+            </div>
+            <div>
+              <label class="label" for="workspaceId">Workspace ID</label>
+              <input id="workspaceId" placeholder="可选，例如某个 workspace_id" />
+            </div>
+            <div>
+              <label class="label" for="topK">Top K</label>
+              <select id="topK">
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+                <option value="8">8</option>
+              </select>
+            </div>
+            <div class="full">
+              <label class="label" for="queryBox">问题</label>
+              <textarea id="queryBox" placeholder="请输入问题，或点击左侧示例问题自动填充。"></textarea>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:16px">
+            <button class="primary-btn" id="runBtn">运行当前 Skill</button>
+            <button class="ghost-btn" id="mockBtn">强制使用 Mock 结果</button>
+          </div>
+          <p class="muted" id="runHint" style="margin-top:12px">
+            输出统一映射为 <code>SkillResult</code>：<code>answer</code>、<code>structured_data</code>、<code>evidence_pages</code>、<code>trace</code>、<code>warnings</code>、<code>next_actions</code>。
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>运行结果</h2>
+        <p>优先显示统一结构化输出，再展示 evidence pages、trace 摘要和 warning，方便研发联调与产品演示。</p>
+      </div>
+      <div class="result-shell">
+        <div class="status-banner">
+          <span id="resultMode">尚未运行</span>
+          <b id="resultStatus">等待执行</b>
+        </div>
+        <div class="result-card">
+          <div class="result-card-head">
+            <h4>Answer</h4>
+            <button class="copy-btn" id="copyAnswerBtn" type="button">复制</button>
+          </div>
+          <div class="answer-box" id="answerBox">点击“运行当前 Skill”后，这里会显示回答。</div>
+        </div>
+        <div class="result-card">
+          <h4>Structured Data</h4>
+          <div id="structuredView" class="structured-view"></div>
+          <details class="raw-json">
+            <summary>查看原始 JSON</summary>
+            <pre id="structuredBox">{}</pre>
+          </details>
+        </div>
+        <div class="result-card">
+          <h4>Evidence Pages</h4>
+          <ul class="evidence-list" id="evidenceBox"><li>尚未产生 evidence pages。</li></ul>
+        </div>
+        <div class="result-card">
+          <h4>Warnings / Next Actions</h4>
+          <ul class="warning-list" id="warningBox"><li>暂无。</li></ul>
+        </div>
+        <div class="result-card">
+          <h4>Trace Summary</h4>
+          <ul class="trace-list" id="traceBox"><li>尚未运行。</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="footer-grid">
+        <article class="footer-card">
+          <h3>统一底座</h3>
+          <p>四个 Skill 共用文档解析、页级检索、Router、VLM 页图理解、Verifier、Trace 和结构化输出，不再为每个业务场景重复造轮子。</p>
+        </article>
+        <article class="footer-card">
+          <h3>真实与 partial</h3>
+          <p>RAG Skill 直接复用现有 QAEngine 与 workspace engine。报表、合同/发票、HR 三个 Skill 已可运行，但当前仍明确标注为 partial。</p>
+        </article>
+        <article class="footer-card">
+          <h3>下一步</h3>
+          <p>继续补字段 schema、专项评测样本、字段级 verifier、HR JD 模板和更细的 trace 观测，再把中台能力沉淀为更稳定的 runtime。</p>
+        </article>
+      </div>
+    </section>
   </div>
 
   <script>
-    const modal = document.getElementById("agentModal");
-    const modalTitle = document.getElementById("modalTitle");
-    const modalDesc = document.getElementById("modalDesc");
-    const modalFlow = document.getElementById("modalFlow");
-    const closeBtn = document.getElementById("modalClose");
+    const FALLBACK_SKILLS = [
+      {
+        name: "rag",
+        display_name: "企业知识库问答",
+        description: "封装现有多模态 RAG 问答链路，返回答案、证据页和 trace。",
+        category: "knowledge",
+        status: "implemented",
+        risk_level: "medium",
+        capabilities: ["hybrid_retrieval", "query_rewrite", "fact_qa", "multi_page_qa", "chart_qa", "verifier"],
+        example_queries: [
+          "这个项目的交付时间是什么？",
+          "这个规格书里某个接口参数是什么意思？",
+          "第 8 页提到的 347+ 量产平台项目是什么意思？"
+        ]
+      },
+      {
+        name: "report_analysis",
+        display_name: "企业报表分析",
+        description: "复用 chart_qa / VLM / evidence pages，支持占比/差值/极值/求和等数值计算并给出可追溯公式。",
+        category: "analytics",
+        status: "partial",
+        risk_level: "medium",
+        capabilities: ["chart_qa", "vlm_page_reasoning", "numeric_extraction", "evidence_pages"],
+        example_queries: [
+          "海外员工占比是多少？",
+          "主机厂数量比一级供应商多多少？",
+          "这个图表反映了什么趋势？"
+        ]
+      },
+      {
+        name: "form_invoice",
+        display_name: "合同 / 表单 / 发票抽取",
+        description: "字段级抽取：每个字段返回 value/source/confidence/verified/masked，敏感字段自动脱敏。",
+        category: "document_extraction",
+        status: "partial",
+        risk_level: "high",
+        capabilities: ["field_extraction", "field_verifier", "sensitive_masking", "evidence_pages"],
+        example_queries: [
+          "这张发票的金额是多少？",
+          "这个合同的付款周期是什么？",
+          "采购单号是多少？"
+        ]
+      },
+      {
+        name: "hr_recruiting",
+        display_name: "HR 招聘辅助",
+        description: "输出候选人总结、岗位技能匹配矩阵与匹配分、面试问题；对涉及敏感属性的提问会合规拦截。",
+        category: "hr",
+        status: "partial",
+        risk_level: "high",
+        capabilities: ["resume_qa", "jd_skill_matrix", "match_scoring", "compliance_guard", "evidence_pages"],
+        example_queries: [
+          "这个候选人适合 AI Agent 工程师岗位吗？",
+          "总结他的 3 个亮点和 3 个风险点。",
+          "根据这份简历生成 10 个面试问题。"
+        ]
+      }
+    ];
 
-    document.querySelectorAll(".agent").forEach((card) => {
-      card.addEventListener("click", () => {
-        const title = card.dataset.title || card.querySelector("h4")?.textContent || "Agent";
-        const desc = card.dataset.desc || "该 Agent 暂未接入真实后端，当前为产品原型模拟。";
-        const flow = card.dataset.flow || "用户输入 → Agent 规划 → Skill 调用 → Verifier 校验 → 输出结果。";
-        modalTitle.textContent = title;
-        modalDesc.textContent = desc;
-        modalFlow.innerHTML = `<b>模拟执行链路：</b><br>${flow}<br><br><b>当前状态：</b>前端原型已完成，真实能力会通过 RAG / MCP / Memory / VLM / Robot Mock 分阶段接入。`;
-        modal.classList.add("show");
-        modal.setAttribute("aria-hidden", "false");
-      });
-    });
+    const ICON_MAP = {
+      rag: "📚",
+      report_analysis: "📊",
+      form_invoice: "🧾",
+      hr_recruiting: "🧑‍💼"
+    };
 
-    function closeModal() {
-      modal.classList.remove("show");
-      modal.setAttribute("aria-hidden", "true");
+    let skills = [...FALLBACK_SKILLS];
+    let selectedSkillName = "rag";
+    let liveApiAvailable = true;
+
+    const skillGrid = document.getElementById("skillGrid");
+    const detailTitle = document.getElementById("detailTitle");
+    const detailDescription = document.getElementById("detailDescription");
+    const detailCapabilities = document.getElementById("detailCapabilities");
+    const detailMeta = document.getElementById("detailMeta");
+    const detailExamples = document.getElementById("detailExamples");
+    const queryBox = document.getElementById("queryBox");
+    const apiBase = document.getElementById("apiBase");
+    const workspaceId = document.getElementById("workspaceId");
+    const topK = document.getElementById("topK");
+    const answerBox = document.getElementById("answerBox");
+    const structuredBox = document.getElementById("structuredBox");
+    const structuredView = document.getElementById("structuredView");
+    const evidenceBox = document.getElementById("evidenceBox");
+    const warningBox = document.getElementById("warningBox");
+    const traceBox = document.getElementById("traceBox");
+    const apiStatus = document.getElementById("apiStatus");
+    const modeTag = document.getElementById("modeTag");
+    const selectedTag = document.getElementById("selectedTag");
+    const resultMode = document.getElementById("resultMode");
+    const resultStatus = document.getElementById("resultStatus");
+    const skillCount = document.getElementById("skillCount");
+
+    function effectiveBase() {
+      const raw = apiBase.value.trim();
+      return raw || window.location.origin;
     }
-    closeBtn.addEventListener("click", closeModal);
-    modal.addEventListener("click", (event) => {
-      if (event.target === modal) closeModal();
+
+    function statusPillClass(status) {
+      if (status === "implemented") return "pill ok";
+      if (status === "partial") return "pill partial";
+      return "pill mock";
+    }
+
+    function renderSkillCards() {
+      skillGrid.innerHTML = skills.map(skill => `
+        <article class="card ${skill.name === selectedSkillName ? "active" : ""}" data-skill="${skill.name}">
+          <div class="card-top">
+            <div class="card-icon">${ICON_MAP[skill.name] || "🧩"}</div>
+            <span class="${statusPillClass(skill.status)}">${skill.status}</span>
+          </div>
+          <div>
+            <h3>${skill.display_name}</h3>
+            <p>${skill.description}</p>
+          </div>
+          <div class="inline-tags">
+            ${(skill.capabilities || []).slice(0, 4).map(item => `<span class="chip">${item}</span>`).join("")}
+          </div>
+          <small>Category: ${skill.category} · Risk: ${skill.risk_level || "medium"}</small>
+          <small>示例：${(skill.example_queries || []).slice(0, 2).join(" / ") || "暂无"}</small>
+        </article>
+      `).join("");
+
+      skillGrid.querySelectorAll("[data-skill]").forEach(node => {
+        node.addEventListener("click", () => selectSkill(node.dataset.skill));
+      });
+    }
+
+    function selectSkill(skillName) {
+      selectedSkillName = skillName;
+      const skill = skills.find(item => item.name === skillName) || skills[0];
+      if (!skill) return;
+      detailTitle.textContent = skill.display_name;
+      detailDescription.textContent = skill.description;
+      selectedTag.textContent = `当前 Skill：${skill.display_name}`;
+      detailCapabilities.innerHTML = (skill.capabilities || []).map(item => `<span class="chip">${item}</span>`).join("");
+      detailMeta.innerHTML = [
+        `状态：${skill.status}`,
+        `风险等级：${skill.risk_level || "medium"}`,
+        `分类：${skill.category}`,
+        skill.status === "implemented"
+          ? "当前能力直接复用现有 RAG / QAEngine 真实链路。"
+          : "当前能力已可运行，但会明确标注 partial/mock 边界。"
+      ].map(item => `<li>${item}</li>`).join("");
+      detailExamples.innerHTML = (skill.example_queries || []).map(item => `<button class="example-btn" type="button">${item}</button>`).join("");
+      detailExamples.querySelectorAll(".example-btn").forEach((button, index) => {
+        button.addEventListener("click", () => {
+          queryBox.value = skill.example_queries[index] || "";
+        });
+      });
+      if (!queryBox.value.trim() && skill.example_queries && skill.example_queries.length) {
+        queryBox.value = skill.example_queries[0];
+      }
+      renderSkillCards();
+    }
+
+    function prettyJson(payload) {
+      return JSON.stringify(payload || {}, null, 2);
+    }
+
+    function esc(value) {
+      if (value === null || value === undefined) return "";
+      return String(value).replace(/[&<>"']/g, ch => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+      ));
+    }
+
+    const FIELD_LABELS = {
+      title: "标题", company: "公司", amount: "金额", date: "日期",
+      id_number: "单据编号", tax_id: "税号", payment_terms: "付款条款"
+    };
+
+    function confTag(field) {
+      const c = field.confidence || "none";
+      if (c === "high") return `<span class="tag ok">high</span>`;
+      if (c === "low") return `<span class="tag low">low</span>`;
+      return `<span class="tag none">none</span>`;
+    }
+
+    // 报表分析：计算卡 + 公式 + 指标
+    function renderReportAnalysis(sd) {
+      const calc = sd.calculation;
+      const parts = [];
+      if (calc) {
+        parts.push(`
+          <div class="calc-card">
+            <div class="calc-headline">
+              <span class="calc-result">${esc(calc.result)}</span>
+              <span class="calc-type">${esc(calc.type)}${calc.confidence ? " · " + esc(calc.confidence) : ""}</span>
+            </div>
+            ${calc.formula ? `<div class="calc-formula">${esc(calc.formula)}</div>` : ""}
+          </div>`);
+      }
+      const metrics = sd.chart_metrics || {};
+      const keys = Object.keys(metrics);
+      if (keys.length) {
+        const rows = keys.map(k => `<tr><td class="field-name">${esc(k)}</td><td class="mono-cell">${esc(metrics[k])}</td></tr>`).join("");
+        parts.push(`<div class="sv-block"><div class="sv-section-label">指标数据</div>
+          <table class="sv-table"><thead><tr><th>指标</th><th>数值</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+      }
+      return parts.join("") || null;
+    }
+
+    // 合同/发票：字段表 + 脱敏/校验标记
+    function renderFormInvoice(sd) {
+      const fields = sd.fields || {};
+      const names = Object.keys(FIELD_LABELS).filter(n => n in fields);
+      if (!names.length) return null;
+      const rows = names.map(name => {
+        const f = fields[name] || {};
+        const empty = f.value === null || f.value === undefined;
+        const shown = empty ? "—" : (f.masked != null && f.masked !== f.value
+          ? `<span class="mono-cell">${esc(f.masked)}</span> <span class="tag masked">已脱敏</span>`
+          : `<span class="mono-cell">${esc(f.value)}</span>`);
+        const verified = empty ? "" : (f.verified ? `<span class="tag ok">校验通过</span>` : `<span class="tag low">待复核</span>`);
+        return `<tr class="${empty ? "is-empty" : ""}">
+          <td class="field-name">${esc(FIELD_LABELS[name])}</td>
+          <td>${shown}</td>
+          <td>${empty ? "" : confTag(f)}</td>
+          <td>${verified}</td>
+        </tr>`;
+      }).join("");
+      const clauses = fields.risk_clauses || [];
+      let extra = "";
+      if (clauses.length) {
+        extra = `<div class="sv-block"><div class="sv-section-label">风险条款</div>
+          <ul class="sv-list">${clauses.map(c => `<li>${esc(c)}</li>`).join("")}</ul></div>`;
+      }
+      const note = sd.sensitive_review_required
+        ? `<div class="alert block">⚠ 含敏感字段，已脱敏展示，原值需在受控环境人工确认。</div>` : "";
+      return `<table class="sv-table">
+        <thead><tr><th>字段</th><th>值</th><th>置信度</th><th>校验</th></tr></thead>
+        <tbody>${rows}</tbody></table>${extra}${note}`;
+    }
+
+    // HR：匹配分 + 技能矩阵 + 风险/面试题
+    function renderHrRecruiting(sd) {
+      const parts = [];
+      const score = sd.match_score;
+      if (score && typeof score.score === "number") {
+        parts.push(`<div class="score-badge"><b>${esc(score.score)}${esc(score.unit || "%")}</b>
+          <span>匹配分 · 命中权重 ${esc(score.hit_weight)}/${esc(score.total_weight)}${sd.target_role ? " · 目标岗位 " + esc(sd.target_role) : ""}</span></div>`);
+      }
+      const matrix = sd.skill_matrix || [];
+      if (matrix.length) {
+        const maxW = Math.max(...matrix.map(m => m.weight || 1), 1);
+        const rows = matrix.map(m => `
+          <div class="matrix-row">
+            <span class="matrix-skill">${esc(m.skill)}</span>
+            <span class="matrix-bar"><span class="${m.present ? "hit" : "miss"}" style="width:${m.present ? Math.round((m.weight || 1) / maxW * 100) : 0}%"></span></span>
+            <span class="matrix-meta">权重 ${esc(m.weight)} · ${m.present ? "命中" : "未命中"}</span>
+          </div>`).join("");
+        parts.push(`<div class="sv-block"><div class="sv-section-label">技能匹配矩阵</div>${rows}</div>`);
+      }
+      const risks = sd.gaps_or_risks || [];
+      if (risks.length) {
+        parts.push(`<div class="sv-block"><div class="sv-section-label">差距与风险</div>
+          <ul class="sv-list">${risks.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>`);
+      }
+      const qs = sd.suggested_interview_questions || [];
+      if (qs.length) {
+        parts.push(`<div class="sv-block"><div class="sv-section-label">建议面试问题</div>
+          <ul class="sv-list">${qs.map(q => `<li>${esc(q)}</li>`).join("")}</ul></div>`);
+      }
+      return parts.join("") || null;
+    }
+
+    function renderStructured(skillName, sd) {
+      if (!sd || !Object.keys(sd).length) {
+        structuredView.innerHTML = `<div class="sv-empty">当前结果没有结构化数据。</div>`;
+        return;
+      }
+      // 合规拦截：任何 skill 命中都优先展示
+      if (sd.compliance && sd.compliance.blocked) {
+        structuredView.innerHTML = `<div class="alert block">⛔ 合规拦截：检测到敏感属性（${(sd.compliance.sensitive_attributes_detected || []).map(esc).join("、")}），已拒绝据此做判断。</div>`;
+        return;
+      }
+      let html = null;
+      if (skillName === "report_analysis") html = renderReportAnalysis(sd);
+      else if (skillName === "form_invoice") html = renderFormInvoice(sd);
+      else if (skillName === "hr_recruiting") html = renderHrRecruiting(sd);
+      else if (skillName === "rag") {
+        const items = [];
+        if (sd.branch) items.push(`<tr><td class="field-name">分支</td><td>${esc(sd.branch)}</td></tr>`);
+        if (sd.rewritten_query) items.push(`<tr><td class="field-name">改写后查询</td><td>${esc(sd.rewritten_query)}</td></tr>`);
+        if (typeof sd.verified === "boolean") items.push(`<tr><td class="field-name">Verifier</td><td>${sd.verified ? "通过" : "未通过"}</td></tr>`);
+        html = items.length ? `<table class="sv-table"><tbody>${items.join("")}</tbody></table>` : null;
+      }
+      structuredView.innerHTML = html || `<div class="sv-empty">该结果暂无可视化结构，展开下方 JSON 查看。</div>`;
+    }
+
+    function renderEvidence(pages) {
+      if (!pages || !pages.length) {
+        evidenceBox.innerHTML = "<li>当前结果没有返回 evidence pages。</li>";
+        return;
+      }
+      evidenceBox.innerHTML = pages.map(item => {
+        const pageNo = item.page_no === null || item.page_no === undefined ? "未知页" : `第 ${item.page_no} 页`;
+        const excerpt = item.excerpt ? `｜${item.excerpt}` : "";
+        return `<li><strong>${item.source_file || item.doc_id || item.page_id}</strong> · ${pageNo} · ${item.page_id}${excerpt}</li>`;
+      }).join("");
+    }
+
+    function renderWarnings(payload) {
+      const warnings = [...(payload.warnings || []), ...(payload.next_actions || [])];
+      if (!warnings.length) {
+        warningBox.innerHTML = "<li>暂无 warning 或后续建议。</li>";
+        return;
+      }
+      warningBox.innerHTML = warnings.map(item => `<li>${item}</li>`).join("");
+    }
+
+    function renderTrace(payload) {
+      const trace = payload.trace || {};
+      const items = [];
+      if (trace.branch) items.push(`最终分支：${trace.branch}`);
+      if (trace.route_branch) items.push(`初始路由：${trace.route_branch}`);
+      if (typeof trace.verified === "boolean") items.push(`Verifier：${trace.verified ? "通过" : "未通过"}`);
+      if (trace.retry_reason) items.push(`重试原因：${trace.retry_reason}`);
+      if (trace.stages && trace.stages.length) {
+        trace.stages.forEach(stage => {
+          items.push(`${stage.stage} · ${stage.elapsed_ms}ms`);
+        });
+      }
+      traceBox.innerHTML = items.length ? items.map(item => `<li>${item}</li>`).join("") : "<li>当前结果未返回 trace 详情。</li>";
+    }
+
+    function renderResult(payload, sourceLabel) {
+      resultMode.textContent = `结果来源：${sourceLabel}`;
+      resultStatus.textContent = `${payload.skill_name || selectedSkillName} · ${payload.status || "unknown"}`;
+      answerBox.textContent = payload.answer || "";
+      const sd = payload.structured_data || {};
+      structuredBox.textContent = prettyJson(sd);
+      renderStructured(payload.skill_name || selectedSkillName, sd);
+      renderEvidence(payload.evidence_pages || []);
+      renderWarnings(payload);
+      renderTrace(payload);
+    }
+
+    function mockResult(skill, query) {
+      const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      const base = {
+        skill_name: skill.name,
+        status: skill.status === "implemented" ? "success" : "need_more_info",
+        evidence_pages: [
+          {
+            page_id: `${skill.name}_mock_p1`,
+            doc_id: `${skill.name}_mock_doc`,
+            source_file: "mock-demo.pdf",
+            page_no: 1,
+            score: 0.98,
+            excerpt: "这是页面演示用的 mock 证据，不代表真实生产数据。"
+          }
+        ],
+        trace: {
+          branch: skill.name === "report_analysis" ? "chart_qa" : "fact_qa",
+          route_branch: skill.name === "report_analysis" ? "chart_qa" : "fact_qa",
+          verified: skill.name === "rag",
+          retry_reason: "",
+          stages: [
+            { stage: "route", elapsed_ms: 5, detail: { source: "mock" } },
+            { stage: "retrieve", elapsed_ms: 22, detail: { source: "mock" } },
+            { stage: "generate", elapsed_ms: 41, detail: { source: "mock" } }
+          ]
+        },
+        warnings: ["当前结果来自前端 mock fallback，仅用于页面展示和结构联调。"],
+        next_actions: ["启动 FastAPI 后，可切换为真实 `/agent-center/run` 调用。"]
+      };
+
+      if (skill.name === "rag") {
+        return {
+          ...base,
+          answer: `Mock RAG 回答：已收到问题“${query}”。真实环境下这里会复用现有 QAEngine 返回 evidence pages 和 verifier trace。`,
+          structured_data: {
+            branch: "fact_qa",
+            rewritten_query: query,
+            verified: true,
+            source_files: ["mock-demo.pdf"]
+          }
+        };
+      }
+      if (skill.name === "report_analysis") {
+        return {
+          ...base,
+          answer: "Mock 报表分析：当前示例显示产品线 B 为最高值，差值与占比仅为前端演示口径。",
+          structured_data: {
+            calculation: {
+              type: "max",
+              metric: "产品线B",
+              result: 180,
+              formula: "max(产品线A, 产品线B, 产品线C)",
+              inputs: { 产品线A: 120, 产品线B: 180, 产品线C: 95 },
+              confidence: "high"
+            },
+            chart_metrics: {
+              产品线A: 120,
+              产品线B: 180,
+              产品线C: 95
+            }
+          }
+        };
+      }
+      if (skill.name === "form_invoice") {
+        return {
+          ...base,
+          answer: "Mock 抽取结果：采购单号为 PO-78421，敏感字段已脱敏展示。",
+          structured_data: {
+            fields: {
+              title: { value: "采购申请单", source: "form_p3", confidence: "high", verified: true, masked: "采购申请单" },
+              company: { value: null, source: null, confidence: "none", verified: false, masked: null },
+              amount: { value: null, source: null, confidence: "none", verified: false, masked: null },
+              date: { value: "2024-09-03", source: "form_p3", confidence: "high", verified: true, masked: "2024-09-03" },
+              id_number: { value: "PO-78421", source: "form_p3", confidence: "high", verified: true, masked: "****8421" },
+              tax_id: { value: null, source: null, confidence: "none", verified: false, masked: null },
+              payment_terms: { value: null, source: null, confidence: "none", verified: false, masked: null },
+              risk_clauses: []
+            },
+            schema_status: "field_level",
+            sensitive_review_required: true
+          }
+        };
+      }
+      return {
+        ...base,
+        answer: "Mock HR 招聘辅助：返回候选人摘要、技能匹配矩阵、匹配分与面试题模板，真实效果依赖简历/JD 资料。",
+        structured_data: {
+          candidate_summary: "已识别到 Python、FastAPI、RAG、Agent 等关键词。",
+          matched_skills: ["Python", "FastAPI", "RAG", "Agent"],
+          skill_matrix: [
+            { skill: "Python", weight: 3, present: true, evidence_page: "mock_p1" },
+            { skill: "RAG", weight: 3, present: true, evidence_page: "mock_p1" },
+            { skill: "Agent", weight: 3, present: true, evidence_page: "mock_p1" },
+            { skill: "LLM", weight: 2, present: false, evidence_page: null },
+            { skill: "FastAPI", weight: 1, present: true, evidence_page: "mock_p1" },
+            { skill: "Docker", weight: 1, present: false, evidence_page: null }
+          ],
+          match_score: { score: 76.9, hit_weight: 10, total_weight: 13, unit: "%" },
+          target_role: "AI Agent",
+          gaps_or_risks: ["当前没有明确 JD，上述判断偏向候选人画像总结。"],
+          suggested_interview_questions: [
+            "请介绍一个你做过的 RAG/Agent 项目。",
+            "如果检索质量下降，你会如何排查？",
+            "你如何设计一个可追溯的 AI Agent 服务？"
+          ],
+          compliance: { sensitive_attributes_detected: [], blocked: false },
+          generated_at: now
+        }
+      };
+    }
+
+    async function fetchSkills() {
+      try {
+        const response = await fetch(`${effectiveBase()}/agent-center/skills`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (Array.isArray(payload) && payload.length) {
+          skills = payload;
+          liveApiAvailable = true;
+          apiStatus.textContent = "Agent Center API 已连接";
+          apiStatus.className = "pill ok";
+          modeTag.textContent = "Live API";
+          modeTag.className = "pill ok";
+        } else {
+          throw new Error("empty skill list");
+        }
+      } catch (error) {
+        skills = [...FALLBACK_SKILLS];
+        liveApiAvailable = false;
+        apiStatus.textContent = "API 不可用，已回退 mock";
+        apiStatus.className = "pill partial";
+        modeTag.textContent = "Mock Fallback";
+        modeTag.className = "pill partial";
+      }
+      skillCount.textContent = `${skills.length} 个`;
+      if (!skills.some(item => item.name === selectedSkillName)) {
+        selectedSkillName = skills[0]?.name || "rag";
+      }
+      renderSkillCards();
+      selectSkill(selectedSkillName);
+    }
+
+    async function runSkill(forceMock = false) {
+      const skill = skills.find(item => item.name === selectedSkillName);
+      const query = queryBox.value.trim();
+      if (!skill || !query) {
+        answerBox.textContent = "请先选择 Skill 并输入问题。";
+        return;
+      }
+      const payload = {
+        skill_name: skill.name,
+        query,
+        workspace_id: workspaceId.value.trim() || null,
+        top_k: Number(topK.value || 3),
+        options: { return_trace: true }
+      };
+      resultMode.textContent = "执行中…";
+      resultStatus.innerHTML = `<span class="spinner"></span>${esc(skill.name)} · running`;
+      const runBtn = document.getElementById("runBtn");
+      runBtn.disabled = true;
+      runBtn.classList.add("is-loading");
+
+      const finish = () => { runBtn.disabled = false; runBtn.classList.remove("is-loading"); };
+
+      if (forceMock) {
+        renderResult(mockResult(skill, query), "前端 Mock");
+        finish();
+        return;
+      }
+
+      try {
+        const response = await fetch(`${effectiveBase()}/agent-center/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        renderResult(result, "Live API");
+      } catch (error) {
+        renderResult(mockResult(skill, query), "API 失败后回退 Mock");
+      } finally {
+        finish();
+      }
+    }
+
+    document.getElementById("runBtn").addEventListener("click", () => runSkill(false));
+    document.getElementById("mockBtn").addEventListener("click", () => runSkill(true));
+
+    document.getElementById("copyAnswerBtn").addEventListener("click", async (event) => {
+      const btn = event.currentTarget;
+      const text = answerBox.textContent || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        const original = btn.textContent;
+        btn.textContent = "已复制";
+        btn.classList.add("done");
+        setTimeout(() => { btn.textContent = original; btn.classList.remove("done"); }, 1500);
+      } catch (err) {
+        btn.textContent = "复制失败";
+        setTimeout(() => { btn.textContent = "复制"; }, 1500);
+      }
     });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeModal();
+
+    // Ctrl/Cmd + Enter 运行当前 Skill
+    queryBox.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        runSkill(false);
+      }
     });
+
+    apiBase.value = window.location.origin;
+    fetchSkills();
   </script>
 </body>
 </html>
