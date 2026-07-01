@@ -38,9 +38,8 @@ models/
 **/.cache/
 
 # ---------- 本地隐私目录（简历 / 面试 / 宣讲 PDF 等，勿提交）----------
-# 除 private/README.md 外，private 下一层及子目录全部忽略（简历、面试、PDF 等）
-private/*
-!private/README.md
+# private 目录整体忽略，一律不进 git
+private/
 private.zip
 
 # 独立实验目录（SFT demo，非主项目交付）
