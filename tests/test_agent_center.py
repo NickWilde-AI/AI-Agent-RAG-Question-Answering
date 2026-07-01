@@ -130,3 +130,60 @@ def test_form_invoice_field_verifier_and_masking():
 
     empty = _new_field(None, "company", None)
     assert empty["value"] is None and empty["confidence"] == "none"
+
+
+def _jwt(payload, secret="secret"):
+    import base64, hashlib, hmac, json, time
+    enc = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+    head = enc({"alg": "HS256", "typ": "JWT"})
+    body = enc({**payload, "exp": time.time() + 60})
+    raw = f"{head}.{body}"
+    sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), raw.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+    return f"{raw}.{sig}"
+
+
+def test_skill_level_permission_gate():
+    """启用鉴权后：高危 skill 需要许可角色，低危 skill 不受限，admin 放行。"""
+    old_enabled, old_secret = api.SETTINGS.enable_auth, api.SETTINGS.jwt_secret
+    old_engine, old_runtime = api.engine, api.agent_center_runtime
+    api.engine = build_engine("data/demo_pages.json")
+    api.agent_center_runtime = AgentCenterRuntime(lambda: api.engine, lambda: api.research_executor)
+    object.__setattr__(api.SETTINGS, "enable_auth", True)
+    object.__setattr__(api.SETTINGS, "jwt_secret", "secret")
+    try:
+        client = TestClient(api.app)
+
+        def run(skill, headers):
+            return client.post("/agent-center/run", json={"skill_name": skill, "query": "测试", "top_k": 3}, headers=headers)
+
+        no_role = {"Authorization": "Bearer " + _jwt({"sub": "u1"})}
+        hr_role = {"Authorization": "Bearer " + _jwt({"sub": "u2", "roles": ["hr"]})}
+        admin = {"Authorization": "Bearer " + _jwt({"sub": "u3", "roles": ["admin"]})}
+
+        # 高危 skill：无角色被拒
+        assert run("hr_recruiting", no_role).status_code == 403
+        assert run("form_invoice", no_role).status_code == 403
+        # 有 hr 角色 / admin 放行
+        assert run("hr_recruiting", hr_role).status_code == 200
+        assert run("form_invoice", admin).status_code == 200
+        # 低危 skill：无角色也放行
+        assert run("rag", no_role).status_code == 200
+    finally:
+        object.__setattr__(api.SETTINGS, "enable_auth", old_enabled)
+        object.__setattr__(api.SETTINGS, "jwt_secret", old_secret)
+        api.engine, api.agent_center_runtime = old_engine, old_runtime
+
+
+def test_agent_skill_metrics_exposed():
+    """/agent-center/run 后，skill 维度指标出现在 /metrics。"""
+    old_engine, old_runtime = api.engine, api.agent_center_runtime
+    api.engine = build_engine("data/demo_pages.json")
+    api.agent_center_runtime = AgentCenterRuntime(lambda: api.engine, lambda: api.research_executor)
+    try:
+        client = TestClient(api.app)
+        client.post("/agent-center/run", json={"skill_name": "rag", "query": "交付时间", "top_k": 3})
+        metrics = client.get("/metrics").text
+        assert "agent_center_skill_total" in metrics
+        assert 'skill="rag"' in metrics
+    finally:
+        api.engine, api.agent_center_runtime = old_engine, old_runtime

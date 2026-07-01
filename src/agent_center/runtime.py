@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Optional
 
 from .schemas import AgentCenterRunRequest, SkillResult, SkillSpec
@@ -61,6 +62,20 @@ class AgentCenterRuntime:
             )
             return skill.run(request.query, context)
         except Exception as exc:
+            # 高危 skill 的运行失败不能静默：尽力上报 Sentry（未安装则跳过），再降级为结构化失败结果。
+            try:
+                import sentry_sdk
+
+                with sentry_sdk.push_scope() as scope:
+                    scope.set_tag("component", "agent_center")
+                    scope.set_tag("skill", request.skill_name)
+                    scope.set_tag("workspace_id", request.workspace_id or "")
+                    sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
+            logging.getLogger("agent_center.runtime").exception(
+                "skill %s failed: %s", request.skill_name, exc
+            )
             return SkillResult(
                 skill_name=request.skill_name,
                 status="failed",

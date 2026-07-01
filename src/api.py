@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import datetime
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -77,6 +78,11 @@ STAGE_LATENCY = Histogram("rag_stage_latency_seconds", "Per stage latency", ["st
 EVAL_RUN_COUNT = Counter("rag_eval_run_total", "Offline eval run totals")
 DOCUMENT_INGEST = Counter("rag_document_ingest_total", "Document ingest", ["status", "type"])
 DOCUMENT_INGEST_DURATION = Histogram("rag_document_ingest_duration_seconds", "Document ingest duration", ["type"])
+AGENT_SKILL_COUNT = Counter("agent_center_skill_total", "Agent-center skill run totals", ["skill", "status"])
+AGENT_SKILL_LATENCY = Histogram("agent_center_skill_latency_seconds", "Agent-center skill latency seconds", ["skill"])
+_audit_logger = logging.getLogger("agent_center.audit")
+# 高风险 Skill 集合：命中则要求 agent_center_high_risk_roles 中的角色。
+_HIGH_RISK_SKILLS = {"form_invoice", "hr_recruiting"}
 app = FastAPI(title="Visual RAG Agent API", version="0.1.0")
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -590,11 +596,50 @@ def get_agent_center_skill(skill_name: str) -> SkillSpec:
     return skill
 
 
+def _require_skill_permission(skill_name: str, actor: Actor) -> None:
+    """高风险 Skill 的角色门禁：启用鉴权后，非 admin 且缺少许可角色则拒绝。"""
+    if not SETTINGS.enable_auth or actor.is_admin:
+        return
+    if skill_name not in _HIGH_RISK_SKILLS:
+        return
+    allowed = {r.strip() for r in SETTINGS.agent_center_high_risk_roles.split(",") if r.strip()}
+    if allowed and actor.roles.isdisjoint(allowed):
+        raise HTTPException(
+            403,
+            detail={"code": "forbidden", "message": f"skill '{skill_name}' requires one of roles: {sorted(allowed)}"},
+        )
+
+
 @app.post("/agent-center/run", response_model=SkillResult)
 def run_agent_center_skill(req: AgentCenterRunRequest, actor: Actor = Depends(_current_actor)) -> SkillResult:
     if req.workspace_id:
         _require_workspace(req.workspace_id, actor)
-    return agent_center_runtime.run(req)
+    _require_skill_permission(req.skill_name, actor)
+    start = time.perf_counter()
+    result = agent_center_runtime.run(req)
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    # 指标：skill 维度调用数与延迟
+    AGENT_SKILL_COUNT.labels(skill=req.skill_name, status=result.status).inc()
+    AGENT_SKILL_LATENCY.labels(skill=req.skill_name).observe(elapsed_ms / 1000.0)
+    # 结构化审计日志：谁、调了什么、结果、证据量、是否命中合规拦截
+    compliance = result.structured_data.get("compliance") if isinstance(result.structured_data, dict) else None
+    _audit_logger.info(
+        "agent_center_run %s",
+        json.dumps(
+            {
+                "actor": actor.subject,
+                "roles": sorted(actor.roles),
+                "skill": req.skill_name,
+                "workspace_id": req.workspace_id,
+                "status": result.status,
+                "evidence_count": len(result.evidence_pages or []),
+                "compliance_blocked": bool(compliance.get("blocked")) if isinstance(compliance, dict) else False,
+                "elapsed_ms": elapsed_ms,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    return result
 
 
 def _ask_impl(req: AskRequest,stage_callback: Optional[Callable] = None,actor: Actor = ANONYMOUS_ACTOR) -> AskResponse:

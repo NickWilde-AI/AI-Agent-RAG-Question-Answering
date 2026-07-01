@@ -157,6 +157,9 @@ class Settings:
     jwt_secret: str = os.getenv("RAG_JWT_SECRET", "")
     jwt_issuer: str = os.getenv("RAG_JWT_ISSUER", "")
     jwt_audience: str = os.getenv("RAG_JWT_AUDIENCE", "")
+    # 高风险 Skill(合同/发票、HR 招聘)要求的角色；启用鉴权后，缺少该角色的用户被拒。
+    # 逗号分隔，命中任一即放行；admin 始终放行。留空表示不额外限制。
+    agent_center_high_risk_roles: str = os.getenv("RAG_AGENT_HIGH_RISK_ROLES", "hr,finance,analyst,admin")
     # 研究任务的 Planner / Executor / Verifier 多角色 LangGraph 编排。
     enable_research_langgraph: bool = _get_bool("RAG_ENABLE_RESEARCH_LANGGRAPH", False)
     cors_origins: str = os.getenv("RAG_CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
